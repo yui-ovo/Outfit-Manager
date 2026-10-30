@@ -28,12 +28,14 @@ async function run() {
             dbInstance = db; metaCache = meta; partCache = parts; serverInitFailed = failed;
         }
         export function testCache() { return { meta: metaCache, parts: partCache }; }
+        export { validateMetaPayload };
     `;
     const mod = new vm.SourceTextModule(source, { context });
     await mod.link(() => data);
     await mod.evaluate();
     const api = mod.namespace;
     const meta = { ...data.namespace.defMeta(), charIndex: [{ id: '__shared__', name: '__shared__', partKey: 'char:__shared__' }] };
+    meta.apiScene = { enabled: true, reuseVision: false, endpoint: 'https://secondary.test', key: 'test-key', model: 'text', timeoutSeconds: 20 };
     const oldPart = { ...data.namespace.defPartition(), outfits: [{ id: 'old', name: '原穿搭' }], activeIds: ['old'] };
     const newPart = { ...data.namespace.defPartition(), outfits: [{ id: 'new', name: '新穿搭' }] };
     function reset(failed = false) {
@@ -41,6 +43,10 @@ async function run() {
         api.testSetup(fakeDb, meta, { 'user:__default__': oldPart }, failed);
     }
     reset();
+    assert.deepEqual(JSON.parse(JSON.stringify(api.load().apiScene)), meta.apiScene, 'legacy settings/export retain the secondary API configuration');
+    assert.ok(!api.validateMetaPayload(meta));
+    assert.match(api.validateMetaPayload({ ...meta, apiScene: { enabled: 'true' } }), /apiScene.enabled/);
+    assert.match(api.validateMetaPayload({ ...meta, apiScene: { timeoutSeconds: 0 } }), /5–60/);
     let settled = false;
     const pending = api.saveImportPartition('user:__default__', newPart).then(() => { settled = true; });
     await Promise.resolve();
@@ -50,6 +56,7 @@ async function run() {
     await pending;
     assert.equal(api.loadPartition('user:__default__'), newPart);
     assert.equal(values.get('user:__default__').outfits[0].id, 'new');
+    assert.deepEqual(values.get('meta').apiScene, meta.apiScene, 'wardrobe imports preserve API configuration');
 
     reset();
     const aborted = api.saveImportPartition('user:__default__', newPart);

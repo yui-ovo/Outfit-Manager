@@ -6,6 +6,7 @@ import { def, getCharData, getViewOutfits, getViewCategories, getViewActiveIds, 
 import { genId, esc, toast, getPopupLayer, compressImage } from './utils.js';
 import { generateSingleDescription, generateSingleAccDescription, batchGenerateDescriptions, openModelPicker, normalizeEndpoint } from './api.js';
 import { state, fn } from './bridge.js';
+import { sceneSettingsHtml, bindSceneSettings } from './ui-scene-settings.js';
 
 function isImageFile(file) {
     if (!file) return false;
@@ -976,6 +977,7 @@ function openSettingsSheet() {
 
     var sheet = createSheet([
         '<div class="om-sheet-title"><i class="fa-solid fa-sliders"></i>设置</div>',
+        sceneSettingsHtml(),
 
         '<div class="om-sec-title">发送内容</div>',
         '<div class="om-setting-row"><label>发送给 AI 的内容类型</label><select id="om-mode">',
@@ -1065,6 +1067,7 @@ function openSettingsSheet() {
         '<div class="om-setting-row om-row-inline"><label>注入时显示 Toast 提示</label><input type="checkbox" class="om-chk" id="om-debug"' + (d.debug ? ' checked' : '') + ' /></div>',
     ].join(''));
 
+    bindSceneSettings(sheet);
     sheet.querySelector('#om-mode').addEventListener('change', function () { var m = loadMeta(); m.mode = this.value; saveMeta(m); });
     sheet.querySelector('#om-inject-pos').addEventListener('change', function () { var m = loadMeta(); m.injectPosition = this.value; saveMeta(m); });
     sheet.querySelector('#om-tpl-single').addEventListener('input', function () { var m = loadMeta(); m.singleTemplate = this.value; saveMeta(m); });

@@ -6,7 +6,7 @@ import { loadMeta, loadActivePartitions, currentUserPartKey, charNameById } from
 import { SHARED_CHAR_KEY, partGetById, partOutfitNumbers, getActiveKit, getKitAccessories } from './data.js';
 import { toast } from './utils.js';
 import { state } from './bridge.js';
-import { sceneOwners, scenePrompt, registerSceneTools } from './scene-wardrobe.js';
+import { sceneOwners, scenePrompt, prepareSceneOutfits, cancelScenePreparation } from './scene-wardrobe.js';
 
 var BAIBAOKU_SAVE_GENERATE_PATH = '/api/plugins/baibaoku/v1/chats/save-generate';
 var RECENT_INJECTED_BODY_TTL = 2 * 60 * 1000;
@@ -177,6 +177,7 @@ function isBaibaokuSaveGenerateRequest(input) {
 
 function tryInjectPayload(p) {
     if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+    if (p.type === 'quiet' || p.type === 'impersonate') return false;
     if (p.__omInjected) return false;
     if (!p.messages && p.prompt === undefined) return false;
 
@@ -389,57 +390,107 @@ function tryInjectBody(bodyStr, options) {
     return null;
 }
 
+var stoppedGeneration = 0;
+function chatIdentity() {
+    try { return SillyTavern.getContext().chatMetadata; } catch (e) { return null; }
+}
+async function preparePayload(payload, signal) {
+    if (!payload || payload.__omInjected || (!Array.isArray(payload.messages) && typeof payload.prompt !== 'string')) return false;
+    if (payload.type === 'quiet' || payload.type === 'impersonate') return false;
+    const chat = chatIdentity(), stopped = stoppedGeneration, userKey = currentUserPartKey();
+    try { await prepareSceneOutfits(signal); } catch (e) { /* A selector failure must not block main generation. */ }
+    if ((signal && signal.aborted) || chatIdentity() !== chat || stopped !== stoppedGeneration || currentUserPartKey() !== userKey) throw new DOMException('换装判断已取消', 'AbortError');
+    return true;
+}
+async function prepareBody(body, options, signal) {
+    if (wasRecentlyInjectedBody(body)) return null;
+    let parsed;
+    try { parsed = JSON.parse(body); } catch (e) { return null; }
+    const payload = options.baibaokuSaveGenerate && parsed && parsed.generate ? parsed.generate : parsed;
+    if (payload !== parsed && wasRecentlyInjectedBody(JSON.stringify(payload))) return null;
+    if (!await preparePayload(payload, signal)) return null;
+    return tryInjectPayload(payload) ? JSON.stringify(parsed) : null;
+}
+function generationRequest(input) {
+    // Keep unrelated extensions' JSON requests (and wardrobe backup saves) out.
+    try {
+        const url = new URL(getFetchUrl(input), location.href);
+        return /\/chat\/completions\/?$|\/v\d+\/completions\/?$/.test(url.pathname) ||
+            (url.origin === location.origin && (/^\/api\/(?:backends\/(?:chat-completions|text-completions)|novelai|kobold)\/generate(?:-stream)?$/.test(url.pathname) || url.pathname === BAIBAOKU_SAVE_GENERATE_PATH));
+    } catch (e) { return false; }
+}
+function internalRequest(input, init) {
+    if (init && init.__omInternal) return true;
+    try { return new Headers(init && init.headers || input && input.headers).has('X-OM-Internal'); } catch (e) { return false; }
+}
 function registerCompletionEventInjection() {
     if (window.__omCompletionEventInjectionInstalled) return;
-    window.__omCompletionEventInjectionInstalled = true;
-
-    import('/script.js').then(function (mod) {
-        var eventSource = mod && mod.eventSource;
-        var eventTypes = mod && mod.event_types;
-        var eventName = eventTypes && eventTypes.CHAT_COMPLETION_SETTINGS_READY;
-        if (!eventSource || !eventName || typeof eventSource.on !== 'function') return;
-
-        var handler = function (payload) {
-            try {
+    function install(mod) {
+        const events = mod && mod.eventSource, types = mod && mod.event_types;
+        if (!events || !types || !types.CHAT_COMPLETION_SETTINGS_READY || typeof events.on !== 'function') return false;
+        const handler = async payload => {
+            if (await preparePayload(payload)) {
                 if (tryInjectPayload(payload)) rememberInjectedBody(payload);
-            } catch (e) {}
+            }
         };
-
-        eventSource.on(eventName, handler);
-        if (typeof eventSource.makeFirst === 'function') {
-            eventSource.makeFirst(eventName, handler);
-        }
-    }).catch(function () {
-        window.__omCompletionEventInjectionInstalled = false;
-    });
+        events.on(types.CHAT_COMPLETION_SETTINGS_READY, handler);
+        if (typeof events.makeFirst === 'function') events.makeFirst(types.CHAT_COMPLETION_SETTINGS_READY, handler);
+        if (types.GENERATION_STOPPED) events.on(types.GENERATION_STOPPED, () => { stoppedGeneration++; cancelScenePreparation(); });
+        window.__omCompletionEventInjectionInstalled = true;
+        return true;
+    }
+    try { if (install(SillyTavern.getContext())) return; } catch (e) {}
+    import('/script.js').then(install).catch(() => {});
 }
 
-// ── 安装拦截器 ─────────────────────────────────────────
 export function setupInjection() {
-    // 防止重复安装（热重载等场景）
     if (window.__omInjectionInstalled) return;
     window.__omInjectionInstalled = true;
-    try { registerSceneTools(); } catch (e) { console.warn('[outfit-manager] 场景工具暂不可用', e); }
-
     registerCompletionEventInjection();
-
-    var origFetch = window.fetch;
-    window.fetch = function (input, init) {
-        try {
-            // 跳过插件内部的 API 调用
-            if (init && init.headers && init.headers['X-OM-Internal']) {
-                return origFetch.apply(this, arguments);
+    const origFetch = window.fetch;
+    window.fetch = async function (input, init) {
+        if (internalRequest(input, init) || !generationRequest(input)) return origFetch.call(this, input, init);
+        let body = init && init.body, request = false;
+        if (body === undefined && typeof Request !== 'undefined' && input instanceof Request) {
+            body = await input.clone().text(); request = true;
+        }
+        if (typeof body === 'string') {
+            const changed = await prepareBody(body, { baibaokuSaveGenerate: isBaibaokuSaveGenerateRequest(input) }, init && init.signal || input && input.signal);
+            if (changed) {
+                if (request) input = new Request(input, { body: changed });
+                else init = Object.assign({}, init, { body: changed });
             }
-            if (init && init.body && typeof init.body === 'string') {
-                var nb = tryInjectBody(init.body, { baibaokuSaveGenerate: isBaibaokuSaveGenerateRequest(input) });
-                if (nb) { init = Object.assign({}, init, { body: nb }); return origFetch.call(this, input, init); }
-            }
-        } catch (e) {}
-        return origFetch.apply(this, arguments);
+        }
+        return origFetch.call(this, input, init);
     };
-    var origSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function (body) {
-        try { if (body && typeof body === 'string') { var nb = tryInjectBody(body); if (nb) return origSend.call(this, nb); } } catch (e) {}
-        return origSend.apply(this, arguments);
+    // Older hosts may send the same payload through XHR. Delay async sends only;
+    // abort/open invalidates pending sends so they never fire after cancellation.
+    const xhrs = new WeakMap(), proto = XMLHttpRequest.prototype;
+    const origOpen = proto.open, origSend = proto.send, origAbort = proto.abort, origHeader = proto.setRequestHeader;
+    proto.open = function (method, url, async) {
+        const old = xhrs.get(this);
+        if (old) old.controller.abort();
+        xhrs.set(this, { url, async: async !== false, internal: false, controller: new AbortController() });
+        return origOpen.apply(this, arguments);
+    };
+    proto.setRequestHeader = function (name, value) {
+        const record = xhrs.get(this);
+        if (record && String(name).toLowerCase() === 'x-om-internal') record.internal = true;
+        return origHeader.apply(this, arguments);
+    };
+    proto.abort = function () {
+        const record = xhrs.get(this);
+        if (record) record.controller.abort();
+        return origAbort.apply(this, arguments);
+    };
+    proto.send = function (body) {
+        const record = xhrs.get(this);
+        if (!record || record.internal || !generationRequest(record.url) || typeof body !== 'string') return origSend.apply(this, arguments);
+        const options = { baibaokuSaveGenerate: isBaibaokuSaveGenerateRequest(record.url) };
+        if (!record.async) return origSend.call(this, tryInjectBody(body, options) || body);
+        prepareBody(body, options, record.controller.signal).then(changed => {
+            if (xhrs.get(this) === record && !record.controller.signal.aborted && this.readyState === 1) origSend.call(this, changed || body);
+        }).catch(() => { if (xhrs.get(this) === record) this.abort(); });
     };
 }
+

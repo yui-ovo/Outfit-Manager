@@ -686,7 +686,7 @@ function reassembleFullData() {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'apiScene', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'currentChar'
     ];
     settingsKeys.forEach(function (k) { if (meta[k] !== undefined) d[k] = meta[k]; });
@@ -1318,7 +1318,7 @@ function migrateFromV1(oldData, cb) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'apiScene', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView'
     ];
     settingsKeys.forEach(function (k) {
@@ -1511,7 +1511,7 @@ function splitServerDataToPartitions(serverData, cb) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'apiScene', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView'
     ];
     settingsKeys.forEach(function (k) {
@@ -1851,6 +1851,16 @@ function validateMetaPayload(data) {
     if (data.tagOrder !== undefined && (!Array.isArray(data.tagOrder) || data.tagOrder.some(function (item) { return typeof item !== 'string'; }))) return 'meta.tagOrder 类型无效';
     if (data.fabPos !== undefined && data.fabPos !== null && (!data.fabPos || typeof data.fabPos !== 'object' || Array.isArray(data.fabPos) ||
         typeof data.fabPos.top !== 'number' || !Number.isFinite(data.fabPos.top) || typeof data.fabPos.left !== 'number' || !Number.isFinite(data.fabPos.left))) return 'meta.fabPos 类型无效';
+    if (data.apiScene !== undefined) {
+        if (!data.apiScene || typeof data.apiScene !== 'object' || Array.isArray(data.apiScene)) return 'meta.apiScene 类型无效';
+        for (var sceneField of ['endpoint', 'key', 'model']) {
+            if (data.apiScene[sceneField] !== undefined && typeof data.apiScene[sceneField] !== 'string') return 'meta.apiScene.' + sceneField + ' 类型无效';
+        }
+        for (var sceneFlag of ['enabled', 'reuseVision']) {
+            if (data.apiScene[sceneFlag] !== undefined && typeof data.apiScene[sceneFlag] !== 'boolean') return 'meta.apiScene.' + sceneFlag + ' 类型无效';
+        }
+        if (data.apiScene.timeoutSeconds !== undefined && (!Number.isFinite(data.apiScene.timeoutSeconds) || data.apiScene.timeoutSeconds < 5 || data.apiScene.timeoutSeconds > 60)) return 'meta.apiScene.timeoutSeconds 范围应为 5–60 秒';
+    }
     if (data.apiVision !== undefined && (!data.apiVision || typeof data.apiVision !== 'object' || Array.isArray(data.apiVision))) return 'meta.apiVision 类型无效';
     if (data.apiVision && typeof data.apiVision === 'object' && !Array.isArray(data.apiVision)) {
         var visionStrings = ['endpoint', 'key', 'model', 'prompt', 'accPrompt'];
@@ -2200,7 +2210,7 @@ export function load() {
     var metaKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'apiScene', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'activePresetId'
     ];
     metaKeys.forEach(function (k) { d[k] = meta[k]; });
@@ -2279,7 +2289,7 @@ export function save(d) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'apiScene', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'activePresetId'
     ];
     settingsKeys.forEach(function (k) { if (d[k] !== undefined) meta[k] = d[k]; });

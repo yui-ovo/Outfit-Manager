@@ -1,6 +1,6 @@
 {
   "display_name": "穿搭管理器 Outfit Manager",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "author": "温水 & 克洛宜",
   "js": "index.js",
   "description": "SillyTavern 穿搭管理插件 —— 防止AI为角色乱编服装，支持User/角色独立穿搭、衣柜模式、场景标签、文字/图片/混合注入"
