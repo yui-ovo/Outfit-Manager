@@ -170,6 +170,15 @@ export function partGetById(part, id) {
     return null;
 }
 
+// 编号取完整衣柜的存储顺序；不受勾选、收藏排序、筛选或图片缺失影响。
+export function partOutfitNumbers(part) {
+    var numbers = Object.create(null);
+    ((part && part.outfits) || []).forEach(function (outfit, index) {
+        numbers[outfit.id] = index + 1;
+    });
+    return numbers;
+}
+
 // 判断某 id 是否在 partition 的激活列表中
 export function partIsActive(part, id) {
     if (!part || !part.activeIds) return false;

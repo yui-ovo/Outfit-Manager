@@ -161,6 +161,8 @@ export function injectStyles() {
             '.om-card-img{width:100%;aspect-ratio:3/4;position:relative;background:var(--om-card-img-bg,rgba(127,127,127,.12));',
             'display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}',
             '.om-card-img img{width:100%;height:100%;object-fit:cover;display:block;}',
+            '.om-card-number{position:absolute;bottom:5px;left:5px;padding:3px 6px;border-radius:6px;',
+            'background:rgba(0,0,0,.72);color:#fff;font-size:11px;line-height:1.3;pointer-events:none;}',
             '.om-lazy-img{opacity:0;transition:opacity .25s ease;}',
             '.om-lazy-img.om-loaded{opacity:1;}',
             /* 底部渐变文字遮罩 */

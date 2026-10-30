@@ -13,7 +13,7 @@ import {
 } from './db.js';
 import {
     getCatNames, getSubCats, hasSubCats,
-    partGetById, partIsActive, partGetAccById,
+    partGetById, partIsActive, partGetAccById, partOutfitNumbers,
     getActiveKit, getKitAccessories, ensureOutfitKits,
     SHARED_CHAR_KEY
 } from './data.js';
@@ -299,6 +299,7 @@ export function renderCatbar() {
 // ── 穿搭网格渲染 ──────────────────────────────────────────
 export function renderOutfitGrid(area, part) {
     var allOutfits = part.outfits || [];
+    var outfitNumbers = partOutfitNumbers(part);
 
     // 按分类过滤
     var list;
@@ -406,6 +407,7 @@ export function renderOutfitGrid(area, part) {
             html += '<div class="om-card' + (on ? ' on' : '') + (bsel ? ' batch-sel' : '') + (o.imageData ? '' : ' no-img') + '" data-id="' + o.id + '">' +
                 '<div class="om-card-img">' +
                 checkBox + imgContent + favMark + badge + menuBtn +
+                '<span class="om-card-number" title="勾选后可按名称或此编号指定穿搭">穿搭' + outfitNumbers[o.id] + '</span>' +
                 '</div>' +
                 '<div class="om-card-info">' +
                 '<div class="om-card-name">' + esc(o.name) + '</div>' +

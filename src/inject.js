@@ -3,13 +3,18 @@
 // v2: 使用 loadMeta() + loadActivePartitions() 代替旧 load() 全量读取
 
 import { loadMeta, loadActivePartitions, currentUserPartKey, charNameById } from './db.js';
-import { SHARED_CHAR_KEY, partGetById, getActiveKit, getKitAccessories } from './data.js';
+import { SHARED_CHAR_KEY, partGetById, partOutfitNumbers, getActiveKit, getKitAccessories } from './data.js';
 import { toast } from './utils.js';
 import { state } from './bridge.js';
 
 var BAIBAOKU_SAVE_GENERATE_PATH = '/api/plugins/baibaoku/v1/chats/save-generate';
 var RECENT_INJECTED_BODY_TTL = 2 * 60 * 1000;
 var recentInjectedBodies = [];
+var OUTFIT_SELECTION_RULE = '用户明确指定穿搭名称或编号（如“穿搭2”）时，优先选择该穿搭；名称可用能唯一对应的简称。仅在用户未指定时按场景标签选择。编号仅在各自衣柜内有效；名称或编号有歧义时先询问，不要猜测。';
+
+function outfitLabel(outfit, numbers) {
+    return '[穿搭' + numbers[outfit.id] + '] 名称：' + ((outfit.name || '').trim() || '未命名穿搭');
+}
 
 // 获取注入用的图片URL（server模式下优先用预解析的base64）
 function getInjectImageUrl(outfit) {
@@ -94,13 +99,13 @@ function injectImageBlocks(p, ownerImageGroups, imgPrompt, multiImgPrompt) {
                 if (grp.isMulti) {
                     hasMulti = true;
                     c.push({ type: 'text', text: '\n[' + grp.name + '的可选穿搭 - 共' + grp.outfits.length + '套]' });
-                    grp.outfits.forEach(function (o, i) {
-                        c.push({ type: 'text', text: '\n(穿搭' + (i + 1) + ')' + (o.sceneTag ? ' [场景：' + o.sceneTag + ']' : '') + '：' });
+                    grp.outfits.forEach(function (o) {
+                        c.push({ type: 'text', text: '\n' + outfitLabel(o, grp.numbers) + (o.sceneTag ? ' [场景：' + o.sceneTag + ']' : '') + '\n参考图片：' });
                         c.push({ type: 'image_url', image_url: { url: getInjectImageUrl(o) } });
                     });
                 } else {
                     var o = grp.outfits[0];
-                    c.push({ type: 'text', text: '\n[' + grp.name + '当前穿着]' });
+                    c.push({ type: 'text', text: '\n[' + grp.name + '当前穿着]\n' + outfitLabel(o, grp.numbers) });
                     c.push({ type: 'image_url', image_url: { url: getInjectImageUrl(o) } });
                 }
             });
@@ -109,6 +114,7 @@ function injectImageBlocks(p, ownerImageGroups, imgPrompt, multiImgPrompt) {
             if (prompt) {
                 c.push({ type: 'text', text: '\n' + prompt });
             }
+            if (hasMulti) c.push({ type: 'text', text: '\n' + OUTFIT_SELECTION_RULE });
 
             if (ownerImageGroups.length > 1) {
                 c.push({ type: 'text', text: '\n=== 穿搭图片结束 ===' });
@@ -294,38 +300,37 @@ function tryInjectPayload(p) {
     owners.forEach(function (ow) {
         var active = ow.outfits;
         var isMulti = active.length > 1;
+        var numbers = partOutfitNumbers(ow.partition);
 
         if (isMulti) {
-            var lines = active.map(function (o, i) {
+            var lines = active.map(function (o) {
                 var scene = o.sceneTag ? '【场景：' + o.sceneTag + '】' : '';
                 var desc = (o.description && o.description.trim()) ? o.description.trim() : '';
                 var accText = buildAccText(ow.partition, o);
-                return '[穿搭' + (i + 1) + '] ' + scene + (desc ? '\n' + desc : '') + accText;
+                return outfitLabel(o, numbers) + (scene ? '\n' + scene : '') + (desc ? '\n' + desc : '') + accText;
             });
             if (useText) {
                 var wt = (ow.tplMulti || '[服装信息]\n{{charName}}的穿搭：\n{{wardrobe}}')
                     .replace(/\{\{charName\}\}/g, ow.name)
                     .replace('{{wardrobe}}', lines.join('\n\n'));
-                allTextParts.push(wt);
+                allTextParts.push(wt + '\n' + OUTFIT_SELECTION_RULE);
             }
             if (useImg) {
                 var imgOutfits = active.filter(function (o) { return !!o.imageData; });
-                if (imgOutfits.length > 0) ownerImageGroups.push({ name: ow.name, outfits: imgOutfits, isMulti: true });
+                if (imgOutfits.length > 0) ownerImageGroups.push({ name: ow.name, outfits: imgOutfits, numbers: numbers, isMulti: true });
             }
         } else {
             var o = active[0];
             if (useText) {
                 var desc2 = (o.description && o.description.trim()) ? o.description.trim() : '';
                 var accText2 = buildAccText(ow.partition, o);
-                if (desc2 || accText2) {
-                    var fullDesc = desc2 + accText2;
-                    var st = (ow.tplSingle || '[服装信息]\n{{charName}}当前穿着：\n{{description}}')
-                        .replace(/\{\{charName\}\}/g, ow.name)
-                        .replace('{{description}}', fullDesc);
-                    allTextParts.push(st);
-                }
+                var fullDesc = outfitLabel(o, numbers) + (desc2 ? '\n' + desc2 : '') + accText2;
+                var st = (ow.tplSingle || '[服装信息]\n{{charName}}当前穿着：\n{{description}}')
+                    .replace(/\{\{charName\}\}/g, ow.name)
+                    .replace('{{description}}', fullDesc);
+                allTextParts.push(st);
             }
-            if (useImg && o.imageData) { ownerImageGroups.push({ name: ow.name, outfits: [o], isMulti: false }); }
+            if (useImg && o.imageData) { ownerImageGroups.push({ name: ow.name, outfits: [o], numbers: numbers, isMulti: false }); }
         }
     });
 
