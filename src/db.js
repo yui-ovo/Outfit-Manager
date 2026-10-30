@@ -686,7 +686,7 @@ function reassembleFullData() {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'currentChar'
     ];
     settingsKeys.forEach(function (k) { if (meta[k] !== undefined) d[k] = meta[k]; });
@@ -1317,7 +1317,7 @@ function migrateFromV1(oldData, cb) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView'
     ];
     settingsKeys.forEach(function (k) {
@@ -1510,7 +1510,7 @@ function splitServerDataToPartitions(serverData, cb) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView'
     ];
     settingsKeys.forEach(function (k) {
@@ -1844,6 +1844,7 @@ function validateMetaPayload(data) {
         if (data[stringSettings[settingIndex]] !== undefined && typeof data[stringSettings[settingIndex]] !== 'string') return 'meta.' + stringSettings[settingIndex] + ' 类型无效';
     }
     if (data.debug !== undefined && typeof data.debug !== 'boolean') return 'meta.debug 类型无效';
+    if (data.darkMode !== undefined && typeof data.darkMode !== 'boolean') return 'meta.darkMode 类型无效';
     if (data.showBall !== undefined && typeof data.showBall !== 'boolean') return 'meta.showBall 类型无效';
     if (data.fabSize !== undefined && (typeof data.fabSize !== 'number' || !Number.isFinite(data.fabSize))) return 'meta.fabSize 类型无效';
     if (data.tagOrder !== undefined && (!Array.isArray(data.tagOrder) || data.tagOrder.some(function (item) { return typeof item !== 'string'; }))) return 'meta.tagOrder 类型无效';
@@ -2198,7 +2199,7 @@ export function load() {
     var metaKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'activePresetId'
     ];
     metaKeys.forEach(function (k) { d[k] = meta[k]; });
@@ -2277,7 +2278,7 @@ export function save(d) {
     var settingsKeys = [
         'mode', 'injectPosition', 'singleTemplate', 'multiTemplate',
         'charSingleTemplate', 'charMultiTemplate', 'imagePrompt', 'multiImagePrompt',
-        'debug', 'apiVision', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
+        'debug', 'apiVision', 'darkMode', 'showBall', 'fabImage', 'fabSize', 'fabPos', 'tagOrder',
         'currentView', 'activePresetId'
     ];
     settingsKeys.forEach(function (k) { if (d[k] !== undefined) meta[k] = d[k]; });

@@ -29,6 +29,7 @@ export function defMeta() {
         // UI 状态
         currentView: 'user',
         currentChar: '',            // 存 charId
+        darkMode: false,            // 插件主题，刷新后恢复
         showBall: true,
         fabImage: '',
         fabSize: 38,
@@ -83,6 +84,7 @@ export function ensureMetaDefaults(m) {
     if (!m.charGroups || typeof m.charGroups !== 'object') m.charGroups = {};
     if (!m.activePartitions || typeof m.activePartitions !== 'object') m.activePartitions = {};
     if (!Array.isArray(m.tagOrder)) m.tagOrder = [];
+    if (typeof m.darkMode !== 'boolean') m.darkMode = false;
     if (!m.apiVision) m.apiVision = defMeta().apiVision;
     else {
         var dv = defMeta().apiVision;

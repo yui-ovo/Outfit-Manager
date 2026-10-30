@@ -15,6 +15,8 @@ export function injectStyles() {
             /* 全屏遮罩/容器 */
             '.om-light{--om-bg:#f5f5f7;--om-bg2:#ececef;--om-text:#111;--om-border:rgba(0,0,0,.14);--om-card-bg:#fff;--om-card-img-bg:#e8e8ee;--om-head-bg:rgba(255,255,255,.8);}',
             '.om-dark{--om-bg:#16161a;--om-bg2:#1e1e24;--om-text:#eee;--om-border:rgba(255,255,255,.1);--om-card-bg:#202026;--om-card-img-bg:#25252d;--om-head-bg:rgba(0,0,0,.3);}',
+            '.om-light{--om-selected-bg:#66558f;--om-selected-text:#fff;}',
+            '.om-dark{--om-selected-bg:#d6c8f5;--om-selected-text:#251b37;}',
             '.om-overlay{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;z-index:2147483647;',
             'background:var(--om-bg,var(--SmartThemeBackgroundColor,#16161a));',
             'color:var(--om-text,var(--SmartThemeBodyColor,#eee));',
@@ -55,7 +57,6 @@ export function injectStyles() {
             '.om-filter-chip{padding:4px 12px;border-radius:14px;font-size:.72em;cursor:pointer;white-space:nowrap;',
             'border:1px solid rgba(127,127,127,.2);background:rgba(127,127,127,.06);transition:all .15s;color:inherit;font-family:inherit;}',
             '.om-filter-chip:hover{border-color:var(--SmartThemeQuoteColor,#7c6daf);}',
-            '.om-filter-chip.on{background:var(--SmartThemeQuoteColor,#7c6daf);color:#fff;border-color:var(--SmartThemeQuoteColor,#7c6daf);font-weight:600;}',
             '.om-icon-btn.om-filter-active{color:var(--SmartThemeQuoteColor,#7c6daf);opacity:1;}',
 
             /* ══ 视角切换栏 ══ */
@@ -64,7 +65,6 @@ export function injectStyles() {
             '.om-viewtab{padding:5px 16px;border-radius:18px;font-size:.78em;cursor:pointer;white-space:nowrap;',
             'border:1px solid rgba(127,127,127,.15);background:rgba(127,127,127,.06);transition:all .15s;color:inherit;font-family:inherit;}',
             '.om-viewtab:hover{border-color:var(--SmartThemeQuoteColor,#7c6daf);}',
-            '.om-viewtab.on{background:var(--SmartThemeQuoteColor,#7c6daf);color:#fff;border-color:var(--SmartThemeQuoteColor,#7c6daf);font-weight:600;}',
             '.om-char-sel{flex:1;min-width:0;background:rgba(127,127,127,.08);border:1px solid rgba(127,127,127,.2);',
             'border-radius:8px;color:inherit;padding:5px 10px;font-size:.78em;font-family:inherit;}',
             '.om-char-sel:focus{outline:none;border-color:var(--SmartThemeQuoteColor,#7c6daf);}',
@@ -117,8 +117,13 @@ export function injectStyles() {
             '.om-catbar::-webkit-scrollbar{display:none;}',
             '.om-catbtn{padding:5px 14px;border-radius:18px;font-size:.78em;cursor:pointer;white-space:nowrap;flex-shrink:0;',
             'border:1px solid rgba(127,127,127,.15);background:rgba(127,127,127,.06);transition:all .15s;color:inherit;font-family:inherit;}',
-            '.om-catbtn:hover{border-color:var(--SmartThemeQuoteColor,#7c6daf);color:var(--SmartThemeQuoteColor,#7c6daf);}',
-            '.om-catbtn.on{background:var(--SmartThemeQuoteColor,#7c6daf);color:#fff;border-color:var(--SmartThemeQuoteColor,#7c6daf);font-weight:600;}',
+            '.om-catbtn:hover{border-color:var(--om-selected-bg,#66558f);}',
+            /* 两行分类共用独立配色，覆盖酒馆美化的按钮文字/填充色。 */
+            '#om-catbar .om-catbtn,#om-acc-catbar .om-catbtn{color:var(--om-text,#111) !important;',
+            '-webkit-text-fill-color:currentColor !important;text-shadow:none !important;}',
+            '#om-catbar .om-catbtn.on,#om-acc-catbar .om-catbtn.on,.om-overlay .om-filter-chip.on,.om-overlay .om-viewtab.on{',
+            'background:var(--om-selected-bg,#66558f) !important;color:var(--om-selected-text,#fff) !important;',
+            'border-color:var(--om-selected-bg,#66558f) !important;-webkit-text-fill-color:currentColor !important;text-shadow:none !important;font-weight:600;}',
             '.om-catbtn-back{padding:5px 12px 5px 4px;border:none;background:none;opacity:.5;font-size:.9em;flex-shrink:0;}',
             '.om-catbtn-back:hover{opacity:1;color:var(--SmartThemeQuoteColor,#7c6daf);}',
 

@@ -125,6 +125,7 @@ function openPopup() {
 
     var meta = loadMeta();
     var isUser = meta.currentView !== 'char';
+    state.darkMode = meta.darkMode === true;
 
     var ov = document.createElement('div');
     ov.className = 'om-overlay ' + (state.darkMode ? 'om-dark' : 'om-light');
@@ -138,7 +139,7 @@ function openPopup() {
         '<button class="om-icon-btn" id="om-search-toggle" title="搜索"><i class="fa-solid fa-magnifying-glass"></i></button>' +
         '<button class="om-icon-btn" id="om-filter-toggle" title="筛选"><i class="fa-solid fa-filter"></i></button>' +
         '<button class="om-icon-btn" id="om-view-toggle" title="' + (isUser ? '切换到角色衣柜' : '切换到User衣柜') + '"><i class="fa-solid ' + (isUser ? 'fa-user' : 'fa-masks-theater') + '"></i></button>' +
-        '<button class="om-icon-btn" id="om-theme-toggle"><i class="fa-solid fa-circle-half-stroke"></i></button>' +
+        '<button class="om-icon-btn" id="om-theme-toggle" title="' + (state.darkMode ? '切换到日间模式' : '切换到夜间模式') + '" aria-label="夜间模式" aria-pressed="' + state.darkMode + '"><i class="' + (state.darkMode ? 'fa-solid fa-circle-half-stroke' : 'fa-regular fa-sun') + '"></i></button>' +
         '<button class="om-icon-btn" id="om-x" title="关闭"><i class="fa-solid fa-xmark"></i></button>' +
         '</div></div>' +
         '<div class="om-search-bar" id="om-search-bar">' +
@@ -174,6 +175,9 @@ function openPopup() {
     ov.querySelector('#om-x').addEventListener('click', closePopup);
     ov.querySelector('#om-theme-toggle').addEventListener('click', function () {
         state.darkMode = !state.darkMode;
+        var themeMeta = loadMeta();
+        themeMeta.darkMode = state.darkMode;
+        saveMeta(themeMeta);
         var overlay = document.querySelector('.om-overlay');
         if (overlay) {
             overlay.classList.toggle('om-dark', state.darkMode);
@@ -183,6 +187,10 @@ function openPopup() {
         if (btn) btn.innerHTML = state.darkMode
             ? '<i class="fa-solid fa-circle-half-stroke"></i>'
             : '<i class="fa-regular fa-sun"></i>';
+        if (btn) {
+            btn.title = state.darkMode ? '切换到日间模式' : '切换到夜间模式';
+            btn.setAttribute('aria-pressed', String(state.darkMode));
+        }
     });
     // 视角切换
     ov.querySelector('#om-view-toggle').addEventListener('click', function () {
