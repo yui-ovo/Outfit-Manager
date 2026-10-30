@@ -39,12 +39,12 @@ export function defMeta() {
         // 注入配置
         mode: 'text',
         injectPosition: 'user',
-        singleTemplate: '[User当前穿着]\n{{description}}\n（禁止编造其他服装。严禁集中罗列服装信息，服装细节必须分散融入不同的动作、触感、环境互动中，每次只带出一两个细节。）',
-        multiTemplate: '[User的可选穿搭]\n{{wardrobe}}\n（禁止编造以上之外的服装。根据场景标签匹配穿搭，若回复中出现场景转换则对应切换穿搭。严禁集中罗列服装信息，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。）',
-        charSingleTemplate: '[{{charName}}当前穿着]\n{{description}}\n（禁止编造其他服装。严禁集中罗列服装信息，服装细节必须分散融入不同的动作、触感、环境互动中，每次只带出一两个细节。）',
-        charMultiTemplate: '[{{charName}}的可选穿搭]\n{{wardrobe}}\n（禁止编造以上之外的服装。根据场景标签匹配穿搭，若回复中出现场景转换则对应切换穿搭。严禁集中罗列服装信息，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。）',
-        imagePrompt: '图中为角色当前穿着，禁止编造其他服装。严禁集中罗列，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。',
-        multiImagePrompt: '以上图片为可选穿搭，根据场景标签匹配，场景转换则切换穿搭，禁止编造其他服装。严禁集中罗列，细节分散融入动作和互动中。',
+        singleTemplate: "[User已知穿着参考]\n{{description}}\n（衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。）",
+        multiTemplate: "[User的可选穿搭]\n{{wardrobe}}\n（衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。）",
+        charSingleTemplate: "[{{charName}}已知穿着参考]\n{{description}}\n（衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。）",
+        charMultiTemplate: "[{{charName}}的可选穿搭]\n{{wardrobe}}\n（衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。）",
+        imagePrompt: "图片为已知穿搭参考。衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。",
+        multiImagePrompt: "图片为可选穿搭参考。衣柜是优先参考，并非全部衣物。用户明确指定优先。保持穿着连续，仅在用户要求或剧情实际发生换装时更换；地点变化、未来计划不等于换装。没有适合的衣服时允许补充普通日常服装。若最新正文已换装，以最新正文为准，不要恢复旧衣。服装细节按叙事需要自然融入，无需每次回复都描写。",
         debug: false,
 
         // API
@@ -92,6 +92,7 @@ export function ensureMetaDefaults(m) {
     }
     if (!Array.isArray(m.apiVision.promptTemplates)) m.apiVision.promptTemplates = [];
     if (m.apiVision.activePromptTemplateId === undefined) m.apiVision.activePromptTemplateId = null;
+    upgradeOutfitTemplates(m);
     m._version = 2;
     return m;
 }
@@ -452,4 +453,22 @@ export function getViewById(d, id) {
 
 export function isActive(d, id) {
     return getViewActiveIds(d).indexOf(id) !== -1;
+}
+
+// Only migrate exact bundled defaults; keep user-written templates intact.
+export function upgradeOutfitTemplates(meta) {
+    var defaults = defMeta();
+    var legacy = {
+        singleTemplate: '[User当前穿着]\n{{description}}\n（禁止编造其他服装。严禁集中罗列服装信息，服装细节必须分散融入不同的动作、触感、环境互动中，每次只带出一两个细节。）',
+        multiTemplate: '[User的可选穿搭]\n{{wardrobe}}\n（禁止编造以上之外的服装。根据场景标签匹配穿搭，若回复中出现场景转换则对应切换穿搭。严禁集中罗列服装信息，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。）',
+        charSingleTemplate: '[{{charName}}当前穿着]\n{{description}}\n（禁止编造其他服装。严禁集中罗列服装信息，服装细节必须分散融入不同的动作、触感、环境互动中，每次只带出一两个细节。）',
+        charMultiTemplate: '[{{charName}}的可选穿搭]\n{{wardrobe}}\n（禁止编造以上之外的服装。根据场景标签匹配穿搭，若回复中出现场景转换则对应切换穿搭。严禁集中罗列服装信息，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。）',
+        imagePrompt: '图中为角色当前穿着，禁止编造其他服装。严禁集中罗列，服装细节必须分散融入动作、触感、环境互动中，每次只带出一两个细节。',
+        multiImagePrompt: '以上图片为可选穿搭，根据场景标签匹配，场景转换则切换穿搭，禁止编造其他服装。严禁集中罗列，细节分散融入动作和互动中。'
+    };
+    var changed = false;
+    Object.keys(legacy).forEach(function (key) {
+        if (meta[key] === legacy[key]) { meta[key] = defaults[key]; changed = true; }
+    });
+    return changed;
 }

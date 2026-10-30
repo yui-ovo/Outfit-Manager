@@ -6,6 +6,7 @@ import { loadMeta, loadActivePartitions, currentUserPartKey, charNameById } from
 import { SHARED_CHAR_KEY, partGetById, partOutfitNumbers, getActiveKit, getKitAccessories } from './data.js';
 import { toast } from './utils.js';
 import { state } from './bridge.js';
+import { sceneOwners, scenePrompt, registerSceneTools } from './scene-wardrobe.js';
 
 var BAIBAOKU_SAVE_GENERATE_PATH = '/api/plugins/baibaoku/v1/chats/save-generate';
 var RECENT_INJECTED_BODY_TTL = 2 * 60 * 1000;
@@ -186,9 +187,18 @@ function tryInjectPayload(p) {
 
     // 获取所有有激活穿搭的 partition（已预加载，同步读取）
     var activeParts = loadActivePartitions();
+    var scene = sceneOwners() || [];
+    var sceneText = scenePrompt();
+    activeParts = Object.assign({}, activeParts);
+    scene.forEach(function (owner) { delete activeParts[owner.key]; });
+    if (scene.some(function (owner) { return owner.key === 'char:' + SHARED_CHAR_KEY; })) {
+        Object.keys(activeParts).forEach(function (key) { if (key.indexOf('char:') === 0) delete activeParts[key]; });
+    } else if (scene.some(function (owner) { return owner.key.indexOf('char:') === 0; })) {
+        delete activeParts['char:' + SHARED_CHAR_KEY];
+    }
     // activeParts = { 'user:p_xxx': {outfits,categories,activeIds}, 'char:c_xxx': {...}, ... }
 
-    if (Object.keys(activeParts).length === 0) return null;
+    if (Object.keys(activeParts).length === 0 && !sceneText) return null;
 
     // 收集所有 owner 及其激活穿搭
     var owners = [];
@@ -265,10 +275,10 @@ function tryInjectPayload(p) {
         }
     }
 
-    if (owners.length === 0) return null;
+    if (owners.length === 0 && !sceneText) return null;
 
     // ── 组装注入内容（v2 + 单品支持）──
-    var allTextParts = [];
+    var allTextParts = sceneText ? [sceneText] : [];
     var ownerImageGroups = [];
 
     // 单品描述拼接辅助：按单品 category 排序后拼接
@@ -341,7 +351,7 @@ function tryInjectPayload(p) {
         if (allTextParts.length === 1) {
             mergedText = allTextParts[0];
         } else {
-            mergedText = '=== 当前场景服装信息（必须严格遵守，不可自行编造服装）===\n\n' + allTextParts.join('\n\n---\n\n') + '\n\n=== 服装信息结束 ===';
+            mergedText = '=== 当前场景服装信息（保持连续，用户指定及最新换装结果优先）===\n\n' + allTextParts.join('\n\n---\n\n') + '\n\n=== 服装信息结束 ===';
         }
         injectText(p, mergedText, pos);
         injected = true;
@@ -409,6 +419,7 @@ export function setupInjection() {
     // 防止重复安装（热重载等场景）
     if (window.__omInjectionInstalled) return;
     window.__omInjectionInstalled = true;
+    try { registerSceneTools(); } catch (e) { console.warn('[outfit-manager] 场景工具暂不可用', e); }
 
     registerCompletionEventInjection();
 

@@ -6,7 +6,7 @@
 import {
     load, save,
     loadMeta, saveMeta,
-    loadCurrent,
+    loadCurrent, currentPartKey,
     charNameById
 } from './db.js';
 import {
@@ -17,6 +17,8 @@ import { esc, toast } from './utils.js';
 import { injectStyles } from './styles.js';
 import { state, fn } from './bridge.js';
 import { OM_VERSION } from './version.js';
+import { sceneEntry } from './scene-wardrobe.js';
+import { openSceneMenu } from './ui-scene.js';
 import {
     preResolveActiveImages as preResolveOutfitActiveImages,
     resetOutfitsUiState, disconnectOutfitGridObserver,
@@ -668,6 +670,8 @@ function buildDetailGroups() {
 }
 
 function toggleDetailPanel() {
+    var scene = sceneEntry(currentPartKey());
+    if (scene && scene.enabled) return openSceneMenu({ category: state.curCat === '__all__' ? '' : state.curCat, subCategory: state.curSubCat || '' });
     return toggleOutfitDetailPanel();
 }
 

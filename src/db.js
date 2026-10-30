@@ -4,7 +4,7 @@
 // meta: 全局设置/索引/激活追踪
 // partition: { outfits, categories, activeIds } 按 user/char 独立存储
 
-import { defMeta, defPartition, ensureMetaDefaults, ensurePartDefaults, migrateCategories, SHARED_CHAR_KEY } from './data.js';
+import { defMeta, defPartition, ensureMetaDefaults, ensurePartDefaults, migrateCategories, SHARED_CHAR_KEY, upgradeOutfitTemplates } from './data.js';
 
 // 8位随机ID生成（用于 charId / presetId）
 var ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -890,7 +890,8 @@ export function loadMeta() {
     if (!metaCache) metaCache = defMeta();
     // v2 hydrate 期间禁止 normalize 触发 save/delete；成功打开写门后再做兼容规范化。
     if (serverMode && serverSupportsPartitions && !serverHydrated) return metaCache;
-    if (normalizeSharedCharState(metaCache)) saveMeta(metaCache);
+    var templateChanged = upgradeOutfitTemplates(metaCache);
+    if (normalizeSharedCharState(metaCache) || templateChanged) saveMeta(metaCache);
     return metaCache;
 }
 

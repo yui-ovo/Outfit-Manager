@@ -20,6 +20,8 @@ import {
 import { esc, toast, getPopupLayer, uniqueIds } from './utils.js';
 import { batchClassifyOutfits } from './api.js';
 import { state, fn } from './bridge.js';
+import { bindSceneCategories } from './ui-scene.js';
+import { sceneEntry } from './scene-wardrobe.js';
 
 var detailPanelOpen = false;
 var gridImageObserver = null;
@@ -218,7 +220,6 @@ export function renderCatbar() {
     var part = loadCurrent();
     var cats = part.categories || [];
     var catNames = getCatNames(cats);
-    if (catNames.length === 0) { catbar.style.display = 'none'; state.catDrillParent = null; state.curSubCat = null; state.curCat = '__all__'; return; }
     catbar.style.display = '';
 
     var html = '';
@@ -238,6 +239,7 @@ export function renderCatbar() {
     }
 
     catbar.innerHTML = html;
+    bindSceneCategories(catbar);
 
     if (state.catDrillParent) {
         catbar.querySelector('#om-cat-back').addEventListener('click', function () {
@@ -300,6 +302,7 @@ export function renderCatbar() {
 export function renderOutfitGrid(area, part) {
     var allOutfits = part.outfits || [];
     var outfitNumbers = partOutfitNumbers(part);
+    var scene = sceneEntry(currentPartKey());
 
     // 按分类过滤
     var list;
@@ -384,7 +387,7 @@ export function renderOutfitGrid(area, part) {
         html += '</div><div class="om-empty"><i class="fa-solid fa-shirt"></i><span>' + emptyMsg + '</span></div>';
     } else {
         list.forEach(function (o) {
-            var on = partIsActive(part, o.id);
+            var on = scene && scene.enabled ? !!(scene.current && scene.current.type === 'saved' && scene.current.id === o.id) : partIsActive(part, o.id);
             var bsel = state.batchSelected.indexOf(o.id) !== -1;
             var checkBox = state.batchMode ? '<div class="om-card-check' + (bsel ? ' checked' : '') + '" data-id="' + o.id + '"><i class="fa-solid fa-check"></i></div>' : '';
             var badge = (on && !state.batchMode) ? '<div class="om-badge-on"><i class="fa-solid fa-check"></i></div>' : '';
@@ -600,6 +603,7 @@ export function renderOutfitGrid(area, part) {
 
             card.addEventListener('click', function (e) {
                 if (e.target.closest('.om-card-menu') || e.target.closest('.om-badge-on')) return;
+                if (scene && scene.enabled) { toast('场景模式中请通过分类菜单换装，或退出场景模式后手动勾选'); return; }
                 var curP = loadCurrent();
                 var aids = curP.activeIds || [];
                 var idx = aids.indexOf(id);
@@ -673,6 +677,14 @@ export function renderOutfitGrid(area, part) {
 // ── 底栏状态（使用 loadActivePartitions 跨分包显示）────────
 export function renderBottomStatus() {
     var el = document.getElementById('om-bottom-status'); if (!el) return;
+    var scene = sceneEntry(currentPartKey());
+    if (scene && scene.enabled) {
+        var current = scene.current;
+        var outfit = current && current.type === 'saved' ? partGetById(loadCurrent(), current.id) : null;
+        var label = outfit ? outfit.name : current && current.type === 'temporary' ? '临时日常穿搭' : '沿用剧情穿着';
+        el.innerHTML = '<div class="om-status-dot green"></div><span class="om-status-text">🎲 ' + esc(label) + '</span>';
+        return;
+    }
     var meta = loadMeta();
     var activeParts = loadActivePartitions();
 
