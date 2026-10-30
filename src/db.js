@@ -928,6 +928,57 @@ export function savePartition(partKey, data) {
     return true;
 }
 
+// Import commits one wardrobe and its index in the same IDB transaction. Cache
+// publication and backend scheduling happen only after durable local success.
+export function saveImportPartition(partKey, data, registration) {
+    return new Promise(function (resolve, reject) {
+        if (serverInitFailed || (serverMode && serverSupportsPartitions && !serverHydrated)) {
+            reject(new Error('存储尚未就绪，未保存此衣柜')); return;
+        }
+        var meta = Object.assign({}, loadMeta(), {
+            charIndex: (loadMeta().charIndex || []).slice(),
+            presets: (loadMeta().presets || []).slice(),
+            activePartitions: Object.assign({}, loadMeta().activePartitions)
+        });
+        if (registration) {
+            var list = registration.kind === 'preset' ? meta.presets : meta.charIndex;
+            if (!list.some(function (entry) { return entry.id === registration.entry.id; })) list.push(registration.entry);
+        }
+        if (data.activeIds && data.activeIds.length && (partKey.indexOf('char:') === 0 || partKey === currentUserPartKey())) meta.activePartitions[partKey] = data.activeIds.slice();
+        else delete meta.activePartitions[partKey];
+        if (partKey === currentUserPartKey()) cleanUserActivePartitions(meta, partKey);
+        openDB(function (db) {
+            if (!db) { reject(new Error('无法打开本地存储，未保存此衣柜')); return; }
+            var tx, finished = false;
+            function fail() {
+                if (finished) return;
+                finished = true;
+                reject(new Error('保存失败，可能是存储空间不足；此衣柜未写入，请释放空间后重试'));
+            }
+            try {
+                tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.onabort = tx.onerror = fail;
+                tx.oncomplete = function () {
+                    if (finished) return;
+                    finished = true;
+                    partCache[partKey] = data;
+                    metaCache = meta;
+                    delete deletedPartKeys[partKey];
+                    delete pendingPartitionDeletes[partKey];
+                    scheduleServerPutKey(partKey);
+                    scheduleServerPutKey('meta');
+                    resolve();
+                };
+                tx.objectStore(STORE_NAME).put(data, partKey);
+                tx.objectStore(STORE_NAME).put(meta, 'meta');
+            } catch (error) {
+                if (tx) { try { tx.abort(); } catch (ignored) {} }
+                fail();
+            }
+        });
+    });
+}
+
 // 异步确保 partition 在缓存里（切视角时用）
 export function ensurePartition(partKey, cb) {
     if (serverInitFailed) { if (cb) cb(null); return; }

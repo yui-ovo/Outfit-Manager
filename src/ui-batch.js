@@ -6,6 +6,8 @@ import { getCharData, getViewOutfits, getViewCategories, getById, getCatNames, g
 import { genId, esc, toast, getPopupLayer, compressImage } from './utils.js';
 import { batchGenerateDescriptions, batchGenerateAccDescriptions, classifyOutfitImage } from './api.js';
 import { state, fn } from './bridge.js';
+import { readImportJson, shrinkImportImage, checkImportCancelled } from './import-json.js';
+import { importWardrobes } from './import-data.js';
 
 // 需要从 ui-sheets.js 引入的通用函数
 var createSheet, closeSheet, getAllTagSuggestions;
@@ -14,11 +16,6 @@ export function initBatchDeps(cs, cls, gats) {
     createSheet = cs;
     closeSheet = cls;
     getAllTagSuggestions = gats;
-}
-
-function cloneJson(v, fallback) {
-    if (v === undefined || v === null) return fallback;
-    return JSON.parse(JSON.stringify(v));
 }
 
 function ensurePartArrays(part) {
@@ -84,84 +81,11 @@ function getOutfitMoveTarget(targetType, targetChar, presetIdx) {
     return info;
 }
 
-function mergeCategoryList(target, incoming) {
-    if (!Array.isArray(target)) target = [];
-    (incoming || []).forEach(function (c) {
-        var name = typeof c === 'object' ? c.name : c;
-        var exists = getCatNames(target).indexOf(name) !== -1;
-        if (!exists) target.push(cloneJson(c, c));
-    });
-    return target;
-}
-
-function cloneAccessoryList(accessories, existing) {
-    var used = {};
-    (existing || []).forEach(function (a) { if (a && a.id) used[a.id] = true; });
-    var map = {};
-    var list = [];
-    (accessories || []).forEach(function (a) {
-        if (!a) return;
-        var oldId = a.id || ('a_' + genId().substring(0, 8));
-        var newId = oldId;
-        while (used[newId]) newId = 'a_' + genId().substring(0, 8);
-        used[newId] = true;
-        map[oldId] = newId;
-        var copy = cloneJson(a, {});
-        copy.id = newId;
-        list.push(copy);
-    });
-    return { list: list, map: map };
-}
-
-function remapKitAccIds(outfit, accIdMap) {
-    if (!outfit || !Array.isArray(outfit.kits)) return outfit;
-    outfit.kits.forEach(function (kit) {
-        if (!kit || !Array.isArray(kit.accIds)) return;
-        kit.accIds = kit.accIds.map(function (aid) { return accIdMap[aid] || aid; });
-    });
-    return outfit;
-}
-
-function cloneOutfitForImport(outfit, accIdMap) {
-    var copy = cloneJson(outfit, {});
-    copy.id = genId();
-    return remapKitAccIds(copy, accIdMap || {});
-}
-
 function clearOutfitKits(outfit) {
     if (!outfit) return outfit;
     outfit.kits = [];
     outfit.activeKitId = null;
     return outfit;
-}
-
-function mergeAccessoriesByName(existing, incoming) {
-    if (!Array.isArray(existing)) existing = [];
-    var map = {};
-    (incoming || []).forEach(function (imp) {
-        if (!imp) return;
-        var oldId = imp.id || '';
-        var found = null;
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].name && imp.name && existing[i].name === imp.name
-                && (existing[i].category || '') === (imp.category || '')) {
-                found = existing[i];
-                break;
-            }
-        }
-        if (found) {
-            var keepId = found.id;
-            Object.assign(found, cloneJson(imp, {}), { id: keepId });
-            if (oldId) map[oldId] = keepId;
-        } else {
-            var cloned = cloneAccessoryList([imp], existing);
-            if (cloned.list[0]) {
-                existing.push(cloned.list[0]);
-                if (oldId) map[oldId] = cloned.list[0].id;
-            }
-        }
-    });
-    return map;
 }
 
 // ── 批量标签选择面板 ──────────────────────────────────────
@@ -384,386 +308,117 @@ function exportData() {
     });
 }
 
+var dataImportRunning = false;
+
+function refreshAfterImport() {
+    fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus(); fn.updateBtn();
+}
+
 function importData() {
+    if (dataImportRunning) { toast('已有导入正在进行，请等待完成或取消'); return; }
     var modal = document.createElement('div');
     modal.className = 'om-modal';
-    modal.style.setProperty('z-index', '2147483647', 'important');
     modal.innerHTML = '<div class="om-modal-box">' +
-        '<div class="om-modal-title"><i class="fa-solid fa-upload" style="margin-right:6px"></i>导入数据</div>' +
-        '<div class="om-hint" style="margin-bottom:10px">选择之前导出的 .json 文件。</div>' +
-        '<button class="om-modal-btn" id="om-imp-merge"><i class="fa-solid fa-code-merge" style="margin-right:8px"></i>合并导入<br><small style="opacity:.6;font-weight:400">追加到现有数据，不覆盖</small></button>' +
-        '<button class="om-modal-btn" id="om-imp-update"><i class="fa-solid fa-pen-to-square" style="margin-right:8px"></i>替换同名<br><small style="opacity:.6;font-weight:400">同名穿搭更新，其余追加</small></button>' +
-        '<button class="om-modal-btn" id="om-imp-replace"><i class="fa-solid fa-arrows-rotate" style="margin-right:8px"></i>覆盖导入<br><small style="opacity:.6;font-weight:400">替换现有穿搭（预设保留）</small></button>' +
+        '<div class="om-modal-title"><i class="fa-solid fa-upload" style="margin-right:6px"></i>分批导入数据</div>' +
+        '<div class="om-hint" style="margin-bottom:10px">选择 .json 文件。分块读取，每 20 项分批处理，按衣柜保存。</div>' +
+        '<label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;font-size:.82em"><input type="checkbox" id="om-imp-compress" />压缩静态图片（手机大文件推荐；最长边 1280，PNG 保留透明，GIF 保留原图）</label>' +
+        '<button class="om-modal-btn" id="om-imp-merge">合并导入<br><small>追加到现有数据，不覆盖</small></button>' +
+        '<button class="om-modal-btn" id="om-imp-update">替换同名<br><small>同名穿搭更新，其余追加</small></button>' +
+        '<button class="om-modal-btn" id="om-imp-replace">覆盖导入<br><small>替换对应衣柜的穿搭，现有预设保留</small></button>' +
         '<input type="file" id="om-imp-file" accept=".json" style="display:none" />' +
+        '<div id="om-imp-progress" role="status" aria-live="polite" style="font-size:.82em;white-space:pre-wrap;overflow-wrap:anywhere"></div>' +
+        '<progress id="om-imp-bar" max="100" value="0" style="display:none;width:100%;margin-top:10px"></progress>' +
         '<button class="om-modal-cancel" id="om-imp-cancel">取消</button></div>';
-    var _mp2 = getPopupLayer();
+    var layer = getPopupLayer();
     modal.style.cssText = 'position:absolute !important;inset:0 !important;z-index:1 !important;background:rgba(0,0,0,.45) !important;display:flex !important;align-items:center !important;justify-content:center !important;padding:20px !important;box-sizing:border-box !important;pointer-events:auto !important;';
-    _mp2.appendChild(modal);
-    modal.addEventListener('click', function (e) { if (e.target === modal) _mp2.removeChild(modal); });
-    modal.querySelector('#om-imp-cancel').addEventListener('click', function () { _mp2.removeChild(modal); });
-    var fileInp = document.getElementById('om-imp-file');
-    var importMode = 'merge';
-    function triggerImport(mode) { importMode = mode; fileInp.click(); }
-    document.getElementById('om-imp-merge').addEventListener('click', function () { triggerImport('merge'); });
-    document.getElementById('om-imp-update').addEventListener('click', function () { triggerImport('update'); });
-    document.getElementById('om-imp-replace').addEventListener('click', function () { triggerImport('replace'); });
-    fileInp.addEventListener('change', function () {
-        var file = fileInp.files[0]; if (!file) return;
-        var reader = new FileReader();
-        reader.onload = function (e) {
-            try {
-                var imported = JSON.parse(e.target.result);
-                _mp2.removeChild(modal);
-                if (imported._assets) {
-                    resolveImportAssets(imported, function () {
-                        processImport(imported, importMode);
-                    });
-                } else {
-                    processImport(imported, importMode);
+    layer.appendChild(modal);
+    var fileInp = modal.querySelector('#om-imp-file');
+    var status = modal.querySelector('#om-imp-progress');
+    var bar = modal.querySelector('#om-imp-bar');
+    var cancel = modal.querySelector('#om-imp-cancel');
+    var compress = modal.querySelector('#om-imp-compress');
+    var buttons = Array.from(modal.querySelectorAll('.om-modal-btn'));
+    var importMode = 'merge', controller = null, running = false, finished = false;
+    function close() { if (modal.parentNode) modal.parentNode.removeChild(modal); }
+    modal.addEventListener('click', function (e) { if (e.target === modal && !running) close(); });
+    cancel.addEventListener('click', function () {
+        if (!running) { close(); return; }
+        controller.abort();
+        cancel.disabled = true;
+        status.textContent = '正在停止，请等待当前图片或保存操作结束…';
+    });
+    ['merge', 'update', 'replace'].forEach(function (mode) {
+        modal.querySelector('#om-imp-' + mode).addEventListener('click', function () {
+            if (running || finished) return;
+            importMode = mode; fileInp.click();
+        });
+    });
+    fileInp.addEventListener('change', async function () {
+        var file = fileInp.files[0];
+        if (!file || running || dataImportRunning) return;
+        running = dataImportRunning = true;
+        controller = new AbortController();
+        var userKey = currentUserPartKey();
+        buttons.forEach(function (button) { button.disabled = true; });
+        compress.disabled = true;
+        cancel.textContent = '取消导入';
+        bar.style.display = '';
+        status.textContent = '准备分块读取（' + (file.size / 1024 / 1024).toFixed(1) + ' MB）…';
+        var saved = 0, imageCount = 0;
+        try {
+            var imported = await readImportJson(file, {
+                signal: controller.signal,
+                transformImage: compress.checked ? async function (value) {
+                    checkImportCancelled(controller.signal);
+                    status.textContent = '正在压缩第 ' + (++imageCount) + ' 张图片…';
+                    return shrinkImportImage(value);
+                } : null,
+                onProgress: function (done, total) {
+                    bar.value = total ? done / total * 100 : 0;
+                    status.textContent = '正在分块读取：' + Math.floor(bar.value) + '%';
                 }
-            }
-            catch (err) { toast('文件解析失败，请确认是有效的 JSON 文件', true); }
-        };
-        reader.onerror = function () { toast('文件读取失败', true); };
-        reader.readAsText(file, 'utf-8');
+            });
+            bar.removeAttribute('value');
+            var result = await importWardrobes(imported, importMode, {
+                signal: controller.signal, userKey: userKey,
+                onProgress: function (progress) {
+                    saved = progress.completed;
+                    status.textContent = progress.phase === 'items'
+                        ? '正在处理「' + progress.name + '」：' + progress.done + '/' + progress.total + ' 项'
+                        : (progress.phase === 'saving' ? '正在保存「' : '已保存「') + progress.name + '」';
+                }
+            });
+            saved = result.completedWardrobes;
+            bar.value = 100;
+            status.textContent = '导入完成，已保存 ' + saved + ' 个衣柜。' + (isServerMode() ? '后端同步由插件继续处理。' : '');
+        } catch (error) {
+            saved = error.completedWardrobes || saved;
+            status.textContent = (error.name === 'AbortError' ? '已取消导入。' : '导入未完成：' + error.message + '。') +
+                (saved ? '\n已保存 ' + saved + ' 个衣柜，尚未保存的衣柜保留原数据。再次合并导入同一文件会重复追加。' : '\n未更改原有穿搭数据。');
+            bar.value = 0;
+        } finally {
+            imported = null;
+            fileInp.value = '';
+            running = dataImportRunning = false;
+            finished = true;
+            cancel.disabled = false;
+            cancel.textContent = '关闭';
+            if (saved) refreshAfterImport();
+        }
     });
 }
 
-// ── _assets 处理（导入时）─────────────────────────────────
-function resolveImportAssets(imported, cb) {
-    var assets = imported._assets;
-    if (!assets || typeof assets !== 'object') { cb(); return; }
-    var prefix = getImageUrlPrefix();
-
-    function replaceInImageItems(items, urlMap) {
-        if (!Array.isArray(items)) return;
-        items.forEach(function (item) {
-            if (!item || typeof item.imageData !== 'string') return;
-            if (item.imageData.indexOf(prefix) === 0) {
-                var name = item.imageData.replace(prefix, '');
-                if (urlMap[name]) item.imageData = urlMap[name];
-            }
-        });
-    }
-    function replaceInPartition(part, urlMap) {
-        if (!part) return;
-        replaceInImageItems(part.outfits, urlMap);
-        replaceInImageItems(part.accessories, urlMap);
-    }
-
-    function replaceAll(data, urlMap) {
-        replaceInPartition(data, urlMap);
-        if (data.chars) {
-            for (var cn in data.chars) { replaceInPartition(data.chars[cn], urlMap); }
-        }
-        if (Array.isArray(data.presets)) {
-            data.presets.forEach(function (p) { replaceInPartition(p, urlMap); });
-        }
-        if (typeof data.fabImage === 'string' && data.fabImage.indexOf(prefix) === 0) {
-            var fabName = data.fabImage.replace(prefix, '');
-            if (urlMap[fabName]) data.fabImage = urlMap[fabName];
-        }
-    }
-
-    if (isServerMode()) {
-        // 后端可用：上传 _assets 中的图片，用新 URL 替换引用
-        var names = Object.keys(assets);
-        var urlMap = {};
-        var done = 0;
-        if (names.length === 0) { delete imported._assets; cb(); return; }
-        toast('📦 正在上传图片（0/' + names.length + '）…');
-        names.forEach(function (name) {
-            uploadImage(assets[name], function (_err, newUrl) {
-                urlMap[name] = newUrl;
-                done++;
-                if (done % 5 === 0 || done === names.length) {
-                    toast('📦 正在上传图片（' + done + '/' + names.length + '）…');
-                }
-                if (done >= names.length) {
-                    replaceAll(imported, urlMap);
-                    delete imported._assets;
-                    cb();
-                }
-            });
-        });
-    } else {
-        // 后端不可用：用 _assets 中的 base64 还原 URL 引用
-        var urlMap2 = {};
-        for (var name in assets) { urlMap2[name] = assets[name]; }
-        replaceAll(imported, urlMap2);
-        delete imported._assets;
-        cb();
-    }
-}
-
-function processImport(imported, mode) {
-    var dd = load();
+async function processImport(imported, mode) {
     try {
-        if (imported.type === 'preset' && imported.preset) {
-            var p = imported.preset; p.id = genId();
-            if (!Array.isArray(dd.presets)) dd.presets = [];
-            dd.presets.push(p); save(dd); fn.renderGrid(); toast('✅ 已导入预设：' + p.name); return;
-        }
-
-        // 按名称匹配更新的辅助函数
-        function mergeByName(existing, incoming) {
-            var updated = 0, added = 0;
-            incoming.forEach(function (imp) {
-                var found = false;
-                for (var i = 0; i < existing.length; i++) {
-                    if (existing[i].name && imp.name && existing[i].name === imp.name) {
-                        var keepId = existing[i].id;
-                        Object.assign(existing[i], imp, { id: keepId });
-                        found = true; updated++; break;
-                    }
-                }
-                if (!found) { existing.push(Object.assign({}, imp, { id: genId() })); added++; }
-            });
-            return { updated: updated, added: added };
-        }
-
-        function importSharedCharData(target, src, importMode) {
-            if (!src) return 0;
-            if (!target.chars) target.chars = {};
-            target.charNames = getImportCharNames({ charNames: target.charNames || [], chars: target.chars || {} });
-            var srcC = src.categories || [];
-            var srcAC = src.accCategories || [];
-            var count = 0;
-            if (importMode === 'replace') {
-                var accClone = cloneAccessoryList(src.accessories || [], []);
-                var srcO = (src.outfits || []).map(function (o) { return cloneOutfitForImport(o, accClone.map); });
-                target.chars[SHARED_CHAR_KEY] = { outfits: srcO, categories: cloneJson(srcC, []), activeIds: [], accessories: accClone.list, accCategories: cloneJson(srcAC, []) };
-                count = srcO.length;
-            } else if (importMode === 'update') {
-                var cd0 = getCharData(target, SHARED_CHAR_KEY);
-                ensurePartArrays(cd0);
-                var accMap0 = mergeAccessoriesByName(cd0.accessories, src.accessories || []);
-                var mappedOutfits0 = (src.outfits || []).map(function (o) { return remapKitAccIds(cloneJson(o, {}), accMap0); });
-                var r0 = mergeByName(cd0.outfits, mappedOutfits0);
-                cd0.categories = mergeCategoryList(cd0.categories, srcC);
-                cd0.accCategories = mergeCategoryList(cd0.accCategories, srcAC);
-                count = r0.updated + r0.added;
-            } else {
-                var cd = getCharData(target, SHARED_CHAR_KEY);
-                ensurePartArrays(cd);
-                var accAppend = cloneAccessoryList(src.accessories || [], cd.accessories);
-                accAppend.list.forEach(function (a) { cd.accessories.push(a); });
-                cd.accCategories = mergeCategoryList(cd.accCategories, srcAC);
-                var srcO2 = (src.outfits || []).map(function (o) { return cloneOutfitForImport(o, accAppend.map); });
-                srcO2.forEach(function (o) { cd.outfits.push(o); });
-                cd.categories = mergeCategoryList(cd.categories, srcC);
-                count = srcO2.length;
-            }
-            return count;
-        }
-
-        if (imported.type === 'char' && imported.charName) {
-            var cn = imported.charName;
-            if (cn === SHARED_CHAR_KEY) {
-                if (!dd.chars) dd.chars = {};
-                var srcSharedC = imported.categories || [];
-                var srcSharedAC = imported.accCategories || [];
-                if (mode === 'replace') {
-                    var sharedAccClone = cloneAccessoryList(imported.accessories || [], []);
-                    var sharedSrcO = (imported.outfits || []).map(function (o) { return cloneOutfitForImport(o, sharedAccClone.map); });
-                    dd.chars[SHARED_CHAR_KEY] = { outfits: sharedSrcO, categories: cloneJson(srcSharedC, []), activeIds: [], accessories: sharedAccClone.list, accCategories: cloneJson(srcSharedAC, []) };
-                } else if (mode === 'update') {
-                    var sharedCd0 = getCharData(dd, SHARED_CHAR_KEY);
-                    ensurePartArrays(sharedCd0);
-                    var sharedAccMap0 = mergeAccessoriesByName(sharedCd0.accessories, imported.accessories || []);
-                    var sharedMappedOutfits0 = (imported.outfits || []).map(function (o) { return remapKitAccIds(cloneJson(o, {}), sharedAccMap0); });
-                    mergeByName(sharedCd0.outfits, sharedMappedOutfits0);
-                    sharedCd0.categories = mergeCategoryList(sharedCd0.categories, srcSharedC);
-                    sharedCd0.accCategories = mergeCategoryList(sharedCd0.accCategories, srcSharedAC);
-                } else {
-                    var sharedCd = getCharData(dd, SHARED_CHAR_KEY);
-                    ensurePartArrays(sharedCd);
-                    var sharedAccAppend = cloneAccessoryList(imported.accessories || [], sharedCd.accessories);
-                    sharedAccAppend.list.forEach(function (a) { sharedCd.accessories.push(a); });
-                    sharedCd.accCategories = mergeCategoryList(sharedCd.accCategories, srcSharedAC);
-                    var sharedSrcO2 = (imported.outfits || []).map(function (o) { return cloneOutfitForImport(o, sharedAccAppend.map); });
-                    sharedSrcO2.forEach(function (o) { sharedCd.outfits.push(o); });
-                    sharedCd.categories = mergeCategoryList(sharedCd.categories, srcSharedC);
-                }
-                save(dd); fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus();
-                toast('✅ 已导入通用衣柜');
-                return;
-            }
-            if (!dd.chars) dd.chars = {};
-            if (!dd.charNames) dd.charNames = [];
-            var srcC = imported.categories || [];
-            var srcAC = imported.accCategories || [];
-            if (mode === 'replace') {
-                var accClone = cloneAccessoryList(imported.accessories || [], []);
-                var srcO = (imported.outfits || []).map(function (o) { return cloneOutfitForImport(o, accClone.map); });
-                dd.chars[cn] = { outfits: srcO, categories: cloneJson(srcC, []), activeIds: [], accessories: accClone.list, accCategories: cloneJson(srcAC, []) };
-            } else if (mode === 'update') {
-                var cd0 = getCharData(dd, cn);
-                ensurePartArrays(cd0);
-                var accMap0 = mergeAccessoriesByName(cd0.accessories, imported.accessories || []);
-                var mappedOutfits0 = (imported.outfits || []).map(function (o) { return remapKitAccIds(cloneJson(o, {}), accMap0); });
-                var r0 = mergeByName(cd0.outfits, mappedOutfits0);
-                cd0.categories = mergeCategoryList(cd0.categories, srcC);
-                cd0.accCategories = mergeCategoryList(cd0.accCategories, srcAC);
-                if (dd.charNames.indexOf(cn) === -1) dd.charNames.push(cn);
-                save(dd); fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus();
-                toast('✅ 替换同名完成：更新' + r0.updated + '套，新增' + r0.added + '套'); return;
-            } else {
-                var cd = getCharData(dd, cn);
-                ensurePartArrays(cd);
-                var accAppend = cloneAccessoryList(imported.accessories || [], cd.accessories);
-                accAppend.list.forEach(function (a) { cd.accessories.push(a); });
-                cd.accCategories = mergeCategoryList(cd.accCategories, srcAC);
-                var srcO = (imported.outfits || []).map(function (o) { return cloneOutfitForImport(o, accAppend.map); });
-                srcO.forEach(function (o) { cd.outfits.push(o); });
-                cd.categories = mergeCategoryList(cd.categories, srcC);
-            }
-            if (dd.charNames.indexOf(cn) === -1) dd.charNames.push(cn);
-            save(dd); fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus();
-            toast('✅ 已导入角色「' + cn + '」（' + srcO.length + '套穿搭）');
-            return;
-        }
-
-        if (imported.type === 'chars_all' && imported.chars) {
-            if (!dd.chars) dd.chars = {};
-            if (!dd.charNames) dd.charNames = [];
-            var importedNames = getImportCharNames(imported);
-            var totalOutfits = 0;
-            var hasSharedImport = !!imported.chars[SHARED_CHAR_KEY];
-            var sharedCount = importSharedCharData(dd, imported.chars[SHARED_CHAR_KEY], mode);
-            totalOutfits += sharedCount;
-            importedNames.forEach(function (cn) {
-                var src = imported.chars[cn]; if (!src) return;
-                var srcC2 = src.categories || [];
-                var srcAC2 = src.accCategories || [];
-                if (mode === 'replace') {
-                    var accClone2 = cloneAccessoryList(src.accessories || [], []);
-                    var srcO2 = (src.outfits || []).map(function (o) { return cloneOutfitForImport(o, accClone2.map); });
-                    dd.chars[cn] = { outfits: srcO2, categories: cloneJson(srcC2, []), activeIds: [], accessories: accClone2.list, accCategories: cloneJson(srcAC2, []) };
-                    totalOutfits += srcO2.length;
-                } else if (mode === 'update') {
-                    var cd3 = getCharData(dd, cn);
-                    ensurePartArrays(cd3);
-                    var accMap3 = mergeAccessoriesByName(cd3.accessories, src.accessories || []);
-                    var mappedOutfits3 = (src.outfits || []).map(function (o) { return remapKitAccIds(cloneJson(o, {}), accMap3); });
-                    var r3 = mergeByName(cd3.outfits, mappedOutfits3);
-                    cd3.categories = mergeCategoryList(cd3.categories, srcC2);
-                    cd3.accCategories = mergeCategoryList(cd3.accCategories, srcAC2);
-                    totalOutfits += r3.updated + r3.added;
-                } else {
-                    var cd2 = getCharData(dd, cn);
-                    ensurePartArrays(cd2);
-                    var accAppend2 = cloneAccessoryList(src.accessories || [], cd2.accessories);
-                    accAppend2.list.forEach(function (a) { cd2.accessories.push(a); });
-                    cd2.accCategories = mergeCategoryList(cd2.accCategories, srcAC2);
-                    var srcO2 = (src.outfits || []).map(function (o) { return cloneOutfitForImport(o, accAppend2.map); });
-                    srcO2.forEach(function (o) { cd2.outfits.push(o); });
-                    cd2.categories = mergeCategoryList(cd2.categories, srcC2);
-                    totalOutfits += srcO2.length;
-                }
-                if (cn !== SHARED_CHAR_KEY && dd.charNames.indexOf(cn) === -1) dd.charNames.push(cn);
-            });
-            save(dd); fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus();
-            toast('✅ 已导入 ' + (importedNames.length + (hasSharedImport ? 1 : 0)) + ' 个角色（共 ' + totalOutfits + ' 套穿搭）');
-            return;
-        }
-
-        // ── User 穿搭导入：直接写当前 User partition，不经过 save(dd) ──
-        // save(dd) 的 presets 同步会把旧 dd.presets 写回各预设 partition，
-        // 如果当前 activePresetId 指向某个预设，刚导入的数据会被旧快照覆盖。
-        // 所以 User 穿搭导入走 partition API 直接写入。
-        var srcOutfits = imported.outfits || [], srcCats = imported.categories || [];
-        var srcAccessories = imported.accessories || [], srcAccCats = imported.accCategories || [];
-        var userPK = currentUserPartKey();
-        var userPart = loadPartition(userPK);
-        ensurePartArrays(userPart);
-
-        if (mode === 'replace') {
-            var userAccClone = cloneAccessoryList(srcAccessories, []);
-            userPart.outfits = srcOutfits.map(function (o) { return cloneOutfitForImport(o, userAccClone.map); });
-            userPart.categories = cloneJson(srcCats, []);
-            userPart.activeIds = [];
-            userPart.accessories = userAccClone.list;
-            userPart.accCategories = cloneJson(srcAccCats, []);
-        } else if (mode === 'update') {
-            var userAccMap = mergeAccessoriesByName(userPart.accessories, srcAccessories);
-            var mappedUserOutfits = srcOutfits.map(function (o) { return remapKitAccIds(cloneJson(o, {}), userAccMap); });
-            var ru = mergeByName(userPart.outfits, mappedUserOutfits);
-            userPart.categories = mergeCategoryList(userPart.categories, srcCats);
-            userPart.accCategories = mergeCategoryList(userPart.accCategories, srcAccCats);
-            // update模式下角色数据走兼容层
-            if (imported.chars) {
-                var dd2 = load();
-                if (!dd2.chars) dd2.chars = {};
-                if (!dd2.charNames) dd2.charNames = [];
-                var impNames2 = getImportCharNames(imported);
-                importSharedCharData(dd2, imported.chars[SHARED_CHAR_KEY], mode);
-                impNames2.forEach(function (cn) {
-                    var src3 = imported.chars[cn]; if (!src3) return;
-                    var cd4 = getCharData(dd2, cn);
-                    ensurePartArrays(cd4);
-                    var accMap4 = mergeAccessoriesByName(cd4.accessories, src3.accessories || []);
-                    var mappedOutfits4 = (src3.outfits || []).map(function (o) { return remapKitAccIds(cloneJson(o, {}), accMap4); });
-                    mergeByName(cd4.outfits, mappedOutfits4);
-                    cd4.categories = mergeCategoryList(cd4.categories, src3.categories || []);
-                    cd4.accCategories = mergeCategoryList(cd4.accCategories, src3.accCategories || []);
-                    if (dd2.charNames.indexOf(cn) === -1) dd2.charNames.push(cn);
-                });
-                save(dd2);
-            }
-            // 先写 User partition 再刷新
-            savePartition(userPK, userPart);
-            syncActivePartitions(userPK, userPart.activeIds);
-            fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus(); fn.updateBtn();
-            toast('✅ 替换同名完成：更新' + ru.updated + '套，新增' + ru.added + '套');
-            return;
-        } else {
-            // append 模式
-            var userAccAppend = cloneAccessoryList(srcAccessories, userPart.accessories);
-            userAccAppend.list.forEach(function (a) { userPart.accessories.push(a); });
-            userPart.accCategories = mergeCategoryList(userPart.accCategories, srcAccCats);
-            srcOutfits.forEach(function (o) { userPart.outfits.push(cloneOutfitForImport(o, userAccAppend.map)); });
-            userPart.categories = mergeCategoryList(userPart.categories, srcCats);
-        }
-
-        // 写入 User partition
-        savePartition(userPK, userPart);
-        syncActivePartitions(userPK, userPart.activeIds);
-
-        // 预设导入（如果有的话）仍走兼容层
-        var srcPresets = imported.presets || [];
-        if (srcPresets.length > 0) {
-            var dd3 = load();
-            if (!Array.isArray(dd3.presets)) dd3.presets = [];
-            srcPresets.forEach(function (p2) { if (p2) dd3.presets.push(Object.assign({}, p2, { id: genId() })); });
-            save(dd3);
-        }
-
-        // 角色数据导入（replace/append，非 update）走兼容层
-        if (mode !== 'update' && imported.chars) {
-            var dd4 = load();
-            if (!dd4.chars) dd4.chars = {};
-            if (!dd4.charNames) dd4.charNames = [];
-            var impNames = getImportCharNames(imported);
-            importSharedCharData(dd4, imported.chars[SHARED_CHAR_KEY], mode);
-            impNames.forEach(function (cn) {
-                var src2 = imported.chars[cn]; if (!src2) return;
-                var accClone4 = cloneAccessoryList(src2.accessories || [], []);
-                dd4.chars[cn] = {
-                    outfits: (src2.outfits || []).map(function (o) { return cloneOutfitForImport(o, accClone4.map); }),
-                    categories: cloneJson(src2.categories || [], []),
-                    activeIds: [],
-                    accessories: accClone4.list,
-                    accCategories: cloneJson(src2.accCategories || [], [])
-                };
-                if (dd4.charNames.indexOf(cn) === -1) dd4.charNames.push(cn);
-            });
-            save(dd4);
-        }
-
-        fn.renderViewbar(); fn.renderCatbar(); fn.renderGrid(); fn.renderBottomStatus(); fn.updateBtn();
-        toast('✅ 导入成功：' + userPart.outfits.length + ' 套穿搭');
-    } catch (err) { toast('导入处理失败：' + err.message, true); }
+        var result = await importWardrobes(imported, mode);
+        refreshAfterImport();
+        toast('✅ 导入完成：' + result.completedWardrobes + ' 个衣柜');
+        return result;
+    } catch (error) {
+        if (error.completedWardrobes) refreshAfterImport();
+        toast('导入未完成：' + error.message, true);
+        throw error;
+    }
 }
 
 // ── 批量导入弹窗 ─────────────────────────────────────────
