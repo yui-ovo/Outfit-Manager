@@ -48,7 +48,7 @@ export function defMeta() {
         debug: false,
 
         // API
-        apiScene: { enabled: false, reuseVision: false, endpoint: '', key: '', model: '', timeoutSeconds: 20 },
+        apiScene: { mode: 'candidates', enabled: false, reuseVision: false, endpoint: '', key: '', model: '', timeoutSeconds: 20 },
         apiVision: {
             endpoint: '', key: '', model: '',
             prompt: '用JSON回复（不要代码块）：{"name":"穿搭名称6字以内","description":"描述服装类型颜色材质款式搭配，只写服装不写人，100-200字"}',
@@ -87,6 +87,7 @@ export function ensureMetaDefaults(m) {
     if (!Array.isArray(m.tagOrder)) m.tagOrder = [];
     if (typeof m.darkMode !== 'boolean') m.darkMode = false;
     if (!m.apiScene || typeof m.apiScene !== 'object' || Array.isArray(m.apiScene)) m.apiScene = dm.apiScene;
+    if (!m.apiScene.mode) m.apiScene.mode = m.apiScene.enabled ? 'api' : 'candidates';
     for (var sk in dm.apiScene) { if (m.apiScene[sk] === undefined) m.apiScene[sk] = dm.apiScene[sk]; }
     if (!m.apiVision) m.apiVision = defMeta().apiVision;
     else {

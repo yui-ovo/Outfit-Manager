@@ -3,9 +3,12 @@ import { partGetById, partOutfitNumbers, getActiveKit, getKitAccessories, SHARED
 import { fn } from './bridge.js';
 import { callSceneApi, sceneApiConfig, sceneApiReady } from './scene-api.js';
 import { toast } from './utils.js';
+import { sceneMode, candidateOffers, candidateHash, candidatePrefix, candidatePrompt, readCandidateMarkers, resolveCandidateMarker } from './scene-candidates.js';
 
 const KEY = 'outfit_manager_scene_v1';
 const runs = new WeakMap();
+const candidateRuns = new WeakMap();
+let candidateQueue = Promise.resolve();
 
 function context() {
     try { return SillyTavern.getContext(); } catch (e) { return null; }
@@ -29,6 +32,7 @@ export function sceneSupported() {
 }
 export function sceneStatus() {
     const ctx = session(false);
+    if (ctx && sceneMode(loadMeta()) === 'candidates') return candidateRuns.get(ctx.chatMetadata) || '';
     const run = ctx && runs.get(ctx.chatMetadata);
     return run && run.status || '';
 }
@@ -75,6 +79,8 @@ export async function configureScene(key, pool, enabled = true) {
     }
     delete next.decisions;
     delete next.checked;
+    delete next.candidateTicket;
+    next.candidates = candidateOffers(part, next);
     await commit(ctx, key, next);
     return next;
 }
@@ -83,7 +89,9 @@ export async function removeScenePool(key, pool) {
     if (!old) return;
     invalidate(ctx);
     const pools = old.pools.filter(p => poolKey(p) !== poolKey(pool));
-    await commit(ctx, key, Object.assign({}, old, { pools, checked: null, enabled: pools.length > 0 }));
+    const next = Object.assign({}, old, { pools, checked: null, enabled: pools.length > 0, candidateTicket: null });
+    next.candidates = candidateOffers(loadPartition(key), next);
+    await commit(ctx, key, next);
 }
 export function sceneOutfitText(part, current) {
     if (!current) return '沿用最新正文中的穿着。';
@@ -113,10 +121,11 @@ export function sceneOwners() {
         name: key === user ? 'User' : key === shared ? ctx.name2 : charNameById(key.slice(5)) }));
 }
 
-// Main model receives the final clothes only, never the selection catalogue.
+// Main model sees fixed category candidates or the current clothes, by mode.
 export function scenePrompt() {
     const owners = sceneOwners();
     if (!owners.length) return '';
+    if (sceneMode(loadMeta()) === 'candidates') return candidatePrompt(owners, sceneOutfitText);
     return '[当前穿着参考]\n' + owners.map(({ name, part, entry }) => '[' + name + ']\n' + sceneOutfitText(part, entry.current)).join('\n') +
         '\n保持穿着连续，按剧情需要自然提及。仅在实际换装时改变；若本次正文自然发生新换装，可补充合适日常衣服，以最新剧情为准。';
 }
@@ -146,7 +155,7 @@ export async function changeSceneOutfit(args) {
     }
     if (!choices.length || (args.selector && choices.length !== 1)) throw new Error('未找到唯一指定穿搭，或此分类没有可抽取穿搭');
     const current = draw(choices, owner.entry.current);
-    await commit(ctx, owner.key, Object.assign({}, owner.entry, { current, checked: null, manualTurn: fingerprint(recentChat(ctx)) }));
+    await commit(ctx, owner.key, Object.assign({}, owner.entry, { current, candidateTicket: null, checked: null, manualTurn: fingerprint(recentChat(ctx)) }));
     return sceneOutfitText(owner.part, current);
 }
 
@@ -229,7 +238,9 @@ async function choose(decision, owner, groups, cfg, chat, signal) {
 
 // Called before main generation, shared by event / fetch / XHR fallbacks.
 // A single deadline covers judgement and candidate selection for all owners.
-export async function prepareSceneOutfits(signal) {
+export async function prepareSceneOutfits(signal, generationType) {
+    if (sceneMode(loadMeta()) === 'candidates') return prepareCandidateOutfits(signal, generationType);
+    if (sceneMode(loadMeta()) !== 'api') return;
     const ctx = session(false);
     if (!ctx || !sceneSupported() || signal && signal.aborted) return;
     const cfg = sceneApiConfig(loadMeta());
@@ -305,5 +316,109 @@ export async function prepareSceneOutfits(signal) {
 export function cancelScenePreparation() {
     const ctx = session(false), run = ctx && runs.get(ctx.chatMetadata);
     if (run && run.controller) run.controller.abort();
+}
+
+export async function refreshSceneCandidates(key) {
+    const ctx = session(true), entry = sceneEntry(key);
+    if (!entry || !entry.enabled) throw new Error('请先加入场景衣柜');
+    const next = Object.assign({}, entry, { candidates: candidateOffers(loadPartition(key), entry, true), candidateTicket: null });
+    await commit(ctx, key, next);
+    candidateRuns.set(ctx.chatMetadata, '候选已更新，当前穿着未改变');
+}
+
+async function prepareCandidateOutfits(signal, type) {
+    const ctx = session(false);
+    if (!ctx || signal && signal.aborted) return;
+    // Serialise repeated event/fetch hooks so both use exactly the same offers.
+    const task = candidateQueue.then(async () => {
+        if (!context() || context().chatMetadata !== ctx.chatMetadata || signal && signal.aborted) return;
+        const chat = ctx.chat || [];
+        const last = chat[chat.length - 1];
+        const replace = ['swipe', 'continue', 'append', 'appendFinal'].includes(type) && last && !last.is_user;
+        const target = replace ? chat.length - 1 : chat.length;
+        const offset = ['continue', 'append', 'appendFinal'].includes(type) && replace ? String(last.mes || '').length : 0;
+        const head = offset ? candidateHash(String(last.mes).slice(0, offset)) : '';
+        const prefix = candidatePrefix(chat, target);
+        const updates = {};
+        for (const o of sceneOwners()) {
+            const offers = candidateOffers(o.part, o.entry);
+            const old = o.entry.candidateTicket;
+            const same = old && old.target === target && old.prefix === prefix && old.offset === offset && old.head === head && JSON.stringify(old.offers) === JSON.stringify(offers);
+            const ticket = same ? old : { target, prefix, offers, offset, head, before: o.entry.current || null };
+            const next = Object.assign({}, o.entry, { candidates: offers, candidateTicket: ticket });
+            if (JSON.stringify(next) !== JSON.stringify(o.entry)) updates[o.key] = next;
+        }
+        if (Object.keys(updates).length) await commitEntries(ctx, updates);
+        candidateRuns.set(ctx.chatMetadata, '分类候选已准备；本轮不调用副 API');
+    });
+    candidateQueue = task.catch(() => {});
+    return task;
+}
+
+// Only the newest assistant reply may change the live clothing state. Receipt
+// and offer tickets live in chat metadata, so swipes and duplicate events use
+// the same pre-reply state, even after reloading the page.
+export async function acceptSceneReply(messageId) {
+    const ctx = session(false);
+    if (!ctx || sceneMode(loadMeta()) !== 'candidates') return;
+    const task = candidateQueue.then(async () => {
+        if (!context() || context().chatMetadata !== ctx.chatMetadata) return;
+        const chat = ctx.chat || [], id = Number(messageId), message = chat[id];
+        if (id !== chat.length - 1 || !message || message.is_user || message.is_system || typeof message.mes !== 'string') return;
+        const prefix = candidatePrefix(chat, id), hash = candidateHash(message.mes);
+        const owners = sceneOwners().filter(o => o.entry.candidateTicket && o.entry.candidateTicket.target === id && o.entry.candidateTicket.prefix === prefix);
+        if (!owners.length) return;
+        if (owners.every(o => o.entry.candidateTicket.applied === hash)) return;
+        let markers;
+        try {
+            const firstTicket = owners[0].entry.candidateTicket;
+            const offset = firstTicket.offset || 0;
+            if (offset && candidateHash(message.mes.slice(0, offset)) !== firstTicket.head) throw new Error('续写前的正文已改变，请手动确认穿着');
+            markers = readCandidateMarkers(message.mes.slice(offset));
+            const updates = {}, seen = new Set();
+            for (const marker of markers) {
+                const owner = owners.find(o => o.key === marker.owner);
+                if (!owner || seen.has(marker.owner)) throw new Error('换装标记的人物无效或重复');
+                seen.add(marker.owner);
+                updates[owner.key] = resolveCandidateMarker(marker, owner.entry.candidateTicket, owner.part);
+            }
+            const changes = {};
+            for (const owner of owners) {
+                const ticket = owner.entry.candidateTicket;
+                changes[owner.key] = Object.assign({}, owner.entry, {
+                    current: Object.hasOwn(updates, owner.key) ? updates[owner.key] : ticket.before,
+                    candidateTicket: Object.assign({}, ticket, { applied: hash })
+                });
+            }
+            await commitEntries(ctx, changes);
+            candidateRuns.set(ctx.chatMetadata, markers.length ? '已登记正文中的换装；候选保持不变，可手动换一批' : '本轮未返回换装标记，沿用原穿着');
+        } catch (e) {
+            const status = (e.message || '换装登记失败') + '；当前记录未改变，可在分类菜单手动修正';
+            candidateRuns.set(ctx.chatMetadata, status);
+            try { toast(status, true); } catch (ignored) {}
+        }
+    });
+    candidateQueue = task.catch(() => {});
+    return task;
+}
+
+export function installSceneReplyEvents(mod) {
+    const events = mod && mod.eventSource, types = mod && mod.event_types;
+    if (!events || !types || typeof events.on !== 'function') return;
+    const receive = id => {
+        const ctx = context();
+        if (ctx && ctx.streamingProcessor && !ctx.streamingProcessor.isFinished) return;
+        return acceptSceneReply(id);
+    };
+    if (types.MESSAGE_RECEIVED) events.on(types.MESSAGE_RECEIVED, receive);
+    if (types.GENERATION_ENDED) events.on(types.GENERATION_ENDED, () => {
+        const ctx = context();
+        return ctx && acceptSceneReply((ctx.chat || []).length - 1);
+    });
+    if (types.MESSAGE_SWIPED) events.on(types.MESSAGE_SWIPED, id => {
+        const ctx = context(), message = ctx && ctx.chat && ctx.chat[id];
+        if (!message || !message.swipes || typeof message.swipes[message.swipe_id] !== 'string') return;
+        return receive(id);
+    });
 }
 

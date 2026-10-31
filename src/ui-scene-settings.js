@@ -4,13 +4,19 @@ import { sceneApiConfig, testSceneApi } from './scene-api.js';
 import { cancelScenePreparation } from './scene-wardrobe.js';
 import { openModelPicker } from './api.js';
 import { esc, toast } from './utils.js';
+import { sceneMode } from './scene-candidates.js';
 
 export function sceneSettingsHtml() {
     const cfg = Object.assign({}, defMeta().apiScene, loadMeta().apiScene);
     const field = (id, title, type, value, placeholder) => '<div class="om-setting-row"><label>' + title + '</label>' +
         '<input id="om-scene-' + id + '" type="' + type + '" value="' + esc(String(value)) + '" placeholder="' + placeholder +
         '" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid rgba(127,127,127,.2);background:rgba(127,127,127,.08);color:inherit;font:inherit" /></div>';
-    return '<div class="om-divider"></div><div class="om-sec-title">场景换装副 API</div>' +
+    const mode = sceneMode(loadMeta());
+    return '<div class="om-divider"></div><div class="om-sec-title">场景衣柜模式</div>' +
+        '<div class="om-setting-row"><label>如何选择穿搭</label><select id="om-scene-mode">' +
+        [['candidates', '分类候选：每类一套，主 AI 选择（无需副 API）'], ['api', '副 API 判断并挑选'], ['manual', '仅手动换装']].map(([value, label]) => '<option value="' + value + '"' + (mode === value ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div>' +
+        '<div class="om-hint">分类候选模式：发送当前穿着＋每个已选分类一套候选的短描述，不调用副 API。候选固定保存，可在分类菜单换一批；AI 在正文换装后返回隐藏标记来登记。分类越多，发送内容越多。漏写标记时可手动修正。</div>' +
+        '<div class="om-divider"></div><div class="om-sec-title">场景换装副 API（仅副 API 模式使用）</div>' +
         '<div class="om-hint">先由副 API 判断是否换衣、挑选合适衣服，主 API 只接收当前穿着。请长按分类加入场景衣柜。副 API 会收到最近 6 条对话（每条最多 2000 字）、当前穿着和候选衣服文字；不发图片。支持兼容 Chat Completions 的接口，普通文字模型即可。</div>' +
         '<div class="om-setting-row om-row-inline"><label>启用副 API 自动换装</label><input id="om-scene-enabled" class="om-chk" type="checkbox"' + (cfg.enabled ? ' checked' : '') + ' /></div>' +
         '<div class="om-setting-row om-row-inline"><label>复用描述生成 API 的地址、Key 和模型</label><input id="om-scene-reuse" class="om-chk" type="checkbox"' + (cfg.reuseVision ? ' checked' : '') + ' /></div>' +
@@ -28,9 +34,10 @@ export function bindSceneSettings(sheet) {
     function save(field, value) {
         cancelScenePreparation();
         const meta = loadMeta();
-        meta.apiScene = Object.assign({}, defMeta().apiScene, meta.apiScene, { [field]: value });
+        meta.apiScene = Object.assign({}, defMeta().apiScene, meta.apiScene, { mode: sceneMode(meta), [field]: value });
         saveMeta(meta);
     }
+    sheet.querySelector('#om-scene-mode').addEventListener('change', function () { save('mode', this.value); });
     for (const name of ['endpoint', 'key', 'model']) {
         sheet.querySelector('#om-scene-' + name).addEventListener('input', function () { save(name, this.value.trim()); });
     }

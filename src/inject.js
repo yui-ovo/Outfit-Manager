@@ -6,7 +6,8 @@ import { loadMeta, loadActivePartitions, currentUserPartKey, charNameById } from
 import { SHARED_CHAR_KEY, partGetById, partOutfitNumbers, getActiveKit, getKitAccessories } from './data.js';
 import { toast } from './utils.js';
 import { state } from './bridge.js';
-import { sceneOwners, scenePrompt, prepareSceneOutfits, cancelScenePreparation } from './scene-wardrobe.js';
+import { sceneOwners, scenePrompt, prepareSceneOutfits, cancelScenePreparation, installSceneReplyEvents } from './scene-wardrobe.js';
+import { stripCandidateMarkers } from './scene-candidates.js';
 
 var BAIBAOKU_SAVE_GENERATE_PATH = '/api/plugins/baibaoku/v1/chats/save-generate';
 var RECENT_INJECTED_BODY_TTL = 2 * 60 * 1000;
@@ -180,6 +181,20 @@ function tryInjectPayload(p) {
     if (p.type === 'quiet' || p.type === 'impersonate') return false;
     if (p.__omInjected) return false;
     if (!p.messages && p.prompt === undefined) return false;
+    // Old response receipts are local bookkeeping, not instructions for the
+    // next model call. Keep originals in chat so changing swipes is replayable.
+    var receiptsRemoved = false;
+    function cleanReceipts(text) {
+        const clean = stripCandidateMarkers(text);
+        if (clean !== text) receiptsRemoved = true;
+        return clean;
+    }
+    if (Array.isArray(p.messages)) p.messages.forEach(function (m) {
+        if (!m || m.role !== 'assistant') return;
+        if (typeof m.content === 'string') m.content = cleanReceipts(m.content);
+        else if (Array.isArray(m.content)) m.content = m.content.map(b => b.type === 'text' ? Object.assign({}, b, { text: cleanReceipts(b.text) }) : b);
+    });
+    if (typeof p.prompt === 'string') p.prompt = cleanReceipts(p.prompt);
 
     var meta = loadMeta();
     var pos = meta.injectPosition || 'user';
@@ -199,7 +214,10 @@ function tryInjectPayload(p) {
     }
     // activeParts = { 'user:p_xxx': {outfits,categories,activeIds}, 'char:c_xxx': {...}, ... }
 
-    if (Object.keys(activeParts).length === 0 && !sceneText) return null;
+    if (Object.keys(activeParts).length === 0 && !sceneText) {
+        if (receiptsRemoved) markPayloadInjected(p);
+        return receiptsRemoved;
+    }
 
     // 收集所有 owner 及其激活穿搭
     var owners = [];
@@ -345,7 +363,7 @@ function tryInjectPayload(p) {
         }
     });
 
-    var injected = false;
+    var injected = receiptsRemoved;
 
     if (allTextParts.length > 0) {
         var mergedText;
@@ -398,7 +416,7 @@ async function preparePayload(payload, signal) {
     if (!payload || payload.__omInjected || (!Array.isArray(payload.messages) && typeof payload.prompt !== 'string')) return false;
     if (payload.type === 'quiet' || payload.type === 'impersonate') return false;
     const chat = chatIdentity(), stopped = stoppedGeneration, userKey = currentUserPartKey();
-    try { await prepareSceneOutfits(signal); } catch (e) { /* A selector failure must not block main generation. */ }
+    try { await prepareSceneOutfits(signal, payload.type); } catch (e) { /* A selector failure must not block main generation. */ }
     if ((signal && signal.aborted) || chatIdentity() !== chat || stopped !== stoppedGeneration || currentUserPartKey() !== userKey) throw new DOMException('换装判断已取消', 'AbortError');
     return true;
 }
@@ -434,6 +452,7 @@ function registerCompletionEventInjection() {
             }
         };
         events.on(types.CHAT_COMPLETION_SETTINGS_READY, handler);
+        installSceneReplyEvents(mod);
         if (typeof events.makeFirst === 'function') events.makeFirst(types.CHAT_COMPLETION_SETTINGS_READY, handler);
         if (types.GENERATION_STOPPED) events.on(types.GENERATION_STOPPED, () => { stoppedGeneration++; cancelScenePreparation(); });
         window.__omCompletionEventInjectionInstalled = true;

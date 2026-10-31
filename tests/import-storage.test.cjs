@@ -46,6 +46,7 @@ async function run() {
     assert.deepEqual(JSON.parse(JSON.stringify(api.load().apiScene)), meta.apiScene, 'legacy settings/export retain the secondary API configuration');
     assert.ok(!api.validateMetaPayload(meta));
     assert.match(api.validateMetaPayload({ ...meta, apiScene: { enabled: 'true' } }), /apiScene.enabled/);
+    assert.match(api.validateMetaPayload({ ...meta, apiScene: { mode: 'unknown' } }), /apiScene.mode/);
     assert.match(api.validateMetaPayload({ ...meta, apiScene: { timeoutSeconds: 0 } }), /5–60/);
     let settled = false;
     const pending = api.saveImportPartition('user:__default__', newPart).then(() => { settled = true; });

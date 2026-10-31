@@ -1853,6 +1853,7 @@ function validateMetaPayload(data) {
         typeof data.fabPos.top !== 'number' || !Number.isFinite(data.fabPos.top) || typeof data.fabPos.left !== 'number' || !Number.isFinite(data.fabPos.left))) return 'meta.fabPos 类型无效';
     if (data.apiScene !== undefined) {
         if (!data.apiScene || typeof data.apiScene !== 'object' || Array.isArray(data.apiScene)) return 'meta.apiScene 类型无效';
+        if (data.apiScene.mode !== undefined && !['candidates', 'api', 'manual'].includes(data.apiScene.mode)) return 'meta.apiScene.mode 类型无效';
         for (var sceneField of ['endpoint', 'key', 'model']) {
             if (data.apiScene[sceneField] !== undefined && typeof data.apiScene[sceneField] !== 'string') return 'meta.apiScene.' + sceneField + ' 类型无效';
         }
